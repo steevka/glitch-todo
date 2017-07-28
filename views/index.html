@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Practical Todos</title>
+    <link href="https://fonts.googleapis.com/css?family=Roboto:300i,400,700" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css?family=Gilda+Display|Permanent+Marker" rel="stylesheet">    
+    <link rel="stylesheet" href="/style.css">
+    <link id="favicon" rel="icon" href="https://hyperdev.com/favicon.ico" type="image/x-icon">
+  </head>
+  <body>
+    <div class="todoList">
+    <h1>a simple todo list</h1>
+    <p class="quote">Instead of saying "I don't have time" try saying "it's not a priority", and see how that feels. Often, that's a perfectly adequate explanation. Time is a choice. If we don't like how we're spending an hour, we can choose differently.</p>
+    <div>
+      <button class="btn" onclick="handlers.toggleAll()">Toggle All</button>
+    </div>
+    
+    <div>
+      <button class="btn" onclick="handlers.addTodo()">Add</button>
+      <input id="addTodoTextInput" type="text" placeholder="Get what done?">
+    </div>
+    
+    <div>
+      <button class="btn" onclick="handlers.changeTodo()">Change Todo</button>
+      <input id="changeTodoPositionInput" type="number">
+      <input id="changeTodoTextInput" type="text" placeholder="Change to what?">
+    </div>
+    
+    <div>
+      <button class="btn" onclick="handlers.deleteTodo()">Delete</button>
+      <input id="deleteTodoPositionInput" type="number">
+    </div>
+    
+    <div>
+      <button class="btn" onclick="handlers.toggleCompleted()">Toggle Completed</button>
+      <input id="toggleCompletedPositionInput" type="number">
+    </div>
+    
+    <ul>
+    </ul>
+    <script src="/client.js"></script>
+    </div>
+  </body>
+</html>
