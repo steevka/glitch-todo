@@ -50,6 +50,9 @@ test('background mode: watches, detects the deal, stops, alerts everywhere', asy
 
     // Stop alarm, then resume: still in stock, but no duplicate urgent push
     await h.page.getByRole('button', { name: 'Stop alarm' }).click();
+    await h.page.getByRole('button', { name: 'History' }).click();
+    assert.match(await h.panelText(), /Alerted you · you stopped the alarm at/);
+    await h.page.getByRole('button', { name: 'Hide history' }).click();
     await h.page.getByRole('button', { name: 'Resume watching' }).click();
     await h.waitFor(() => h.fetches().length > n, 5000, 'resumed checks');
     await new Promise((r) => setTimeout(r, 1500));
@@ -75,6 +78,9 @@ test('over max price never alerts; raising the max in settings does', async () =
     await h.waitFor(() => h.fetches().length >= 4, 8000, 'checks');
     assert.equal(h.pushes((b) => b.priority === 5).length, 0);
     assert.match(await h.panelText(), /above your \$500\.00 max/);
+    await h.page.getByRole('button', { name: 'History' }).click();
+    assert.match(await h.panelText(), /\$749\.99 · Walmart\.com\s*Skipped: \$749\.99 is above your \$500\.00 max · seen \d+× over [^,]+, still in stock/);
+    await h.page.getByRole('button', { name: 'Hide history' }).click();
 
     // Open settings, type, and make sure periodic re-renders don't wipe the input
     await h.page.getByRole('button', { name: 'Settings' }).click();
@@ -260,6 +266,16 @@ test('found but nobody reacts: reminder push, then resumes watching by itself', 
     await h.waitFor(() => h.fetches(h.page).length > n + 1, 30000, 'auto-resumed checks');
     assert.equal(h.pushes((b) => /^Reminder/.test(b.title)).length, 1, 'only the configured number of reminders');
     await h.waitFor(async () => /Out of stock/.test(await h.panelText()), 5000, 'watching again');
+
+    // History shows the find, that nobody responded, and that it went away
+    assert.match(await h.panelText(), /Seen in stock 1× · last .* at \$477\.04/);
+    await h.page.getByRole('button', { name: 'History' }).click();
+    const text = await h.panelText();
+    assert.match(text, /TIMES IT WAS IN STOCK/i);
+    assert.match(text, /\$477\.04 · Walmart\.com/);
+    assert.match(text, /Alerted you · no response · seen once, gone by/);
+    assert.match(text, /CHECKS PER DAY/i);
+    await h.page.getByRole('button', { name: 'Copy history' }).click();
   } finally {
     await h.close();
   }

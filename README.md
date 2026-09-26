@@ -34,8 +34,11 @@ Target listing: <https://www.walmart.com/ip/18235967161?conditionGroupCode=3>
   reloads the real page, which often clears the check by itself. If the check
   is still there, it sends you a push to go complete it and retries every 10
   minutes. Solving captchas is up to you.
-- A daily **"still running"** push at 7am Pacific tells you it's alive. If that
-  push doesn't arrive, the watcher stopped.
+- A daily **"still running"** push at 7am Pacific tells you it's alive and
+  whether the item showed up in stock since the last one. If that push
+  doesn't arrive, the watcher stopped.
+- It keeps a **history**, so you can see what happened while you were away (see
+  below).
 - If it can't read the page 10 times in a row (for example, if Walmart changed
   its layout), you get a "needs attention" push instead of silence.
 - Only one tab checks at a time, even if you open the listing in several tabs.
@@ -99,7 +102,29 @@ Keep the random one.
 | Resume watching | Starts checking again after a find |
 | Test alerts | Sends a test push, notification and siren |
 | Settings | Price limits, speed, phone topic, sound and more |
+| History | What happened while you were away (see below) |
 | Copy debug info | Copies a report to paste to whoever maintains the script if the watcher can't read the page |
+
+### History
+
+The panel always shows a one-line summary, e.g. *"Seen in stock 2× · last Sat,
+Sep 26, 10:02 AM at $477.04"*, or *"Never seen in stock since …"*. Click
+**History** for the details:
+
+- **Times it was in stock:** every sighting, including ones it skipped
+  (over your price, a reseller) and why. For each: when it appeared, the
+  price and seller, how many checks saw it, when it was gone, and whether you
+  were alerted and how you responded ("stopped the alarm", "opened the
+  product page", or "no response").
+- **Checks per day:** how many checks ran each day, so you can tell it was
+  really working, plus bot checks and errors.
+- **Gaps:** stretches with no checking (Mac asleep, Chrome closed, tab
+  navigated away), shown in orange. If a gap covers the 8am–noon window, you
+  know you weren't covered then.
+
+**Copy history** copies it all as text. History is kept per item (the last
+200 sightings, 90 days of counts and 200 gaps). Stopping the watcher doesn't
+erase it; only **Clear history** does.
 
 ### Settings worth knowing
 
@@ -125,8 +150,8 @@ The page parser, deal rules and scheduler are plain functions at the top of
 the script and are covered by unit tests. The end-to-end tests run the real
 script in Chromium against a fake walmart.com, covering in stock, out of
 stock, over price, third-party seller, bot checks (redirect and in place),
-reload mode, multiple tabs, reminders, auto-resume, an unreadable page and
-restarts.
+reload mode, multiple tabs, reminders, auto-resume, an unreadable page,
+restarts and the history view.
 
 ```sh
 npm test            # unit tests (Node 18+)

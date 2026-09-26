@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Walmart Restock Watcher
 // @namespace    https://github.com/steevka/glitch-todo
-// @version      1.0.0
+// @version      1.1.0
 // @description  Watches a Walmart product page (built for the PS5 Pro Open Box) and alerts you with a siren, a desktop notification and a phone push the moment it is in stock under your price. It never buys anything for you.
 // @author       steevka
 // @match        https://www.walmart.com/*
@@ -27,7 +27,7 @@
    * APIs in here so it can be unit tested in Node (see test/unit.test.js).
    * ==================================================================== */
   const Core = (() => {
-    const VERSION = '1.0.0';
+    const VERSION = '1.1.0';
     const TZ = 'America/Los_Angeles';
     const MIN_INTERVAL_SEC = 5;
 
@@ -562,6 +562,119 @@
       return { status: 'unknown', deal: false, best: null, matches: [], summary: 'Stock status not shown on the page' };
     }
 
+    // ---------- history ----------
+    // Kept per item and never wiped by Stop: every time the item showed up
+    // in stock (including ones skipped by your rules), checks per day, and
+    // gaps when the watcher wasn't checking (Mac asleep, Chrome closed...).
+    const HISTORY_LIMITS = { sightings: 200, gaps: 200, days: 90 };
+
+    function emptyHistory() {
+      return { v: 1, since: null, lastCheckAt: null, sightings: [], days: {}, gaps: [] };
+    }
+
+    function copyHistory(hist) {
+      const h = Object.assign(emptyHistory(), hist || {});
+      h.sightings = (h.sightings || []).slice();
+      h.gaps = (h.gaps || []).slice();
+      h.days = Object.assign({}, h.days);
+      return h;
+    }
+
+    // How long without a check counts as "not watching". Error backoff can
+    // legitimately wait up to 15 minutes.
+    function gapThresholdMs(settings, consecutiveErrors = 0) {
+      if (consecutiveErrors > 0) return 16 * 60000;
+      return Math.max(5 * 60000, settings.offMaxSec * 4000, settings.peakMaxSec * 4000);
+    }
+
+    function openSighting(h) {
+      const last = h.sightings[h.sightings.length - 1];
+      return last && last.end === null ? last : null;
+    }
+
+    // status: one of evaluate()'s statuses, or 'error'. offer: the in-stock
+    // offer when status is 'deal' or 'in-stock-filtered'.
+    function recordCheck(hist, { at, status, offer, summary, gapMs }) {
+      const h = copyHistory(hist);
+      if (!h.since) h.since = at;
+      if (h.lastCheckAt && gapMs && at - h.lastCheckAt > gapMs) {
+        h.gaps.push({ from: h.lastCheckAt, to: at });
+        if (h.gaps.length > HISTORY_LIMITS.gaps) h.gaps.splice(0, h.gaps.length - HISTORY_LIMITS.gaps);
+      }
+      h.lastCheckAt = at;
+
+      const dk = timeParts(new Date(at)).dateKey;
+      const d = Object.assign({ checks: 0, inStock: 0, blocks: 0, errors: 0, unknown: 0, first: at, last: at }, h.days[dk]);
+      d.checks++;
+      d.last = at;
+      if (status === 'blocked') d.blocks++;
+      else if (status === 'error') d.errors++;
+      else if (status === 'unknown') d.unknown++;
+      const available = status === 'deal' || status === 'in-stock-filtered';
+      if (available) d.inStock++;
+      h.days[dk] = d;
+      const keys = Object.keys(h.days).sort();
+      while (keys.length > HISTORY_LIMITS.days) delete h.days[keys.shift()];
+
+      const open = openSighting(h);
+      const idx = h.sightings.length - 1;
+      if (available) {
+        const o = offer || {};
+        const price = o.price ?? null;
+        const seller = o.seller || null;
+        if (open && open.price === price && open.seller === seller) {
+          const upd = Object.assign({}, open, { lastSeen: at, checks: (open.checks || 1) + 1 });
+          if (status === 'deal' && !open.matched) Object.assign(upd, { matched: true, note: null });
+          h.sightings[idx] = upd;
+        } else {
+          if (open) h.sightings[idx] = Object.assign({}, open, { end: at });
+          h.sightings.push({
+            start: at,
+            lastSeen: at,
+            end: null,
+            price,
+            seller,
+            condition: o.condition || null,
+            matched: status === 'deal',
+            note: status === 'deal' ? null : String(summary || '').replace(/^In stock but skipped:\s*/i, '') || null,
+            checks: 1,
+            alerted: false,
+            response: null,
+            responseAt: null,
+          });
+          if (h.sightings.length > HISTORY_LIMITS.sightings) {
+            h.sightings.splice(0, h.sightings.length - HISTORY_LIMITS.sightings);
+          }
+        }
+      } else if (status === 'out-of-stock' && open) {
+        h.sightings[idx] = Object.assign({}, open, { end: at });
+      }
+      return h;
+    }
+
+    // Watching was paused on purpose (found, stopped): the silence until the
+    // next check is not a gap.
+    function markResumed(hist) {
+      return Object.assign(copyHistory(hist), { lastCheckAt: null });
+    }
+
+    function updateLatestSighting(hist, patch) {
+      const h = copyHistory(hist);
+      const i = h.sightings.length - 1;
+      if (i >= 0) h.sightings[i] = Object.assign({}, h.sightings[i], patch);
+      return h;
+    }
+
+    function historySummary(hist, fromT = 0) {
+      const h = copyHistory(hist);
+      const sightings = h.sightings.filter((x) => x.lastSeen >= fromT);
+      const gaps = h.gaps.filter((g) => g.to >= fromT);
+      const gapMs = gaps.reduce((a, g) => a + (g.to - Math.max(g.from, fromT)), 0);
+      let checks = 0;
+      for (const d of Object.values(h.days)) if (d.last >= fromT) checks += d.checks;
+      return { sightings, matched: sightings.filter((x) => x.matched), gaps, gapMs, checks };
+    }
+
     function dealKey(offer) {
       return offer ? `${offer.price}|${offer.seller || ''}|${offer.condition || ''}` : '';
     }
@@ -585,6 +698,12 @@
       evaluate,
       reasonsAgainst,
       dealKey,
+      emptyHistory,
+      gapThresholdMs,
+      recordCheck,
+      markResumed,
+      updateLatestSighting,
+      historySummary,
       looksBlocked,
     };
   })();
@@ -996,6 +1115,14 @@
     .settings input[type=checkbox] { width: auto; }
     .settings h4 { margin: 6px 0 0; font-size: 12px; color: #64748b; text-transform: uppercase; letter-spacing: .05em; }
     .topic { font-family: ui-monospace, Menlo, monospace; background: #f1f5f9; padding: 2px 6px; border-radius: 4px; user-select: all; }
+    .seen { font-size: 12px; color: #475569; }
+    .seen-hit { color: #15803d; font-weight: 700; }
+    .history { display: grid; gap: 4px; border-top: 1px solid #e2e8f0; padding-top: 8px; font-size: 12px; }
+    .history h4 { margin: 6px 0 0; font-size: 12px; color: #64748b; text-transform: uppercase; letter-spacing: .05em; }
+    .sight { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 6px 8px; }
+    .sight.hit { background: #f0fdf4; border-color: #86efac; }
+    .day { color: #334155; }
+    .day.gap { color: #c2410c; }
     .log { border-top: 1px solid #e2e8f0; padding-top: 6px; font-size: 11px; color: #475569; display: grid; gap: 2px; max-height: 120px; overflow: auto; }
     .log .warn-line { color: #c2410c; }
     .log .deal-line { color: #15803d; font-weight: 700; }
@@ -1003,6 +1130,9 @@
 
   function fmtTime(t) {
     return t ? new Date(t).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' }) : '—';
+  }
+  function fmtDateTime(t) {
+    return t ? new Date(t).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—';
   }
   function fmtAgo(ms) {
     const s = Math.max(0, Math.round(ms / 1000));
@@ -1016,6 +1146,7 @@
     constructor(watcher) {
       this.w = watcher;
       this.showSettings = false;
+      this.showHistory = false;
       this.host = h('div', { id: 'walmart-restock-watcher' });
       this.root = this.host.attachShadow({ mode: 'open' });
       try {
@@ -1076,6 +1207,7 @@
       // Keep the open settings form across re-renders so typing isn't lost.
       if (this.showSettings) body.appendChild(this.settingsEl || (this.settingsEl = this.settingsForm(s)));
       else this.settingsEl = null;
+      if (this.showHistory) body.appendChild(this.historyView());
       body.appendChild(this.logView());
       this.box.replaceChildren(head, body);
       this.renderLive();
@@ -1085,6 +1217,19 @@
       const parts = [];
       const name = (w && w.name) || this.w.pageName();
       parts.push(h('div', { class: 'name', title: name, text: name }));
+      const hist = this.w.history;
+      if (hist && hist.since) {
+        const sights = hist.sightings || [];
+        const last = sights[sights.length - 1];
+        parts.push(
+          h('div', {
+            class: sights.some((x) => x.matched) ? 'seen seen-hit' : 'seen',
+            text: last
+              ? `Seen in stock ${sights.length}× · last ${fmtDateTime(last.start)} at ${Core.fmtMoney(last.price)}`
+              : `Never seen in stock since ${fmtDateTime(hist.since)}`,
+          })
+        );
+      }
 
       if (!w || w.status === 'stopped') {
         parts.push(
@@ -1096,7 +1241,8 @@
             { class: 'btns' },
             h('button', { class: 'primary', onclick: () => this.w.startWatching(), text: 'Start watching' }),
             h('button', { onclick: () => this.w.testAlerts(), text: 'Test alerts' }),
-            this.settingsButton()
+            this.settingsButton(),
+            this.historyButton()
           )
         );
         return parts;
@@ -1123,7 +1269,8 @@
             h('button', { class: 'go', onclick: () => this.w.openProduct(), text: 'Open product page' }),
             !w.ackAt ? h('button', { onclick: () => this.w.acknowledge(), text: 'Stop alarm' }) : null,
             h('button', { class: 'primary', onclick: () => this.w.resume(), text: 'Resume watching' }),
-            h('button', { class: 'danger', onclick: () => this.w.stopWatching(), text: 'Stop' })
+            h('button', { class: 'danger', onclick: () => this.w.stopWatching(), text: 'Stop' }),
+            this.historyButton()
           )
         );
         return parts;
@@ -1166,10 +1313,96 @@
           h('button', { class: 'danger', onclick: () => this.w.stopWatching(), text: 'Stop' }),
           h('button', { onclick: () => this.w.testAlerts(), text: 'Test alerts' }),
           this.settingsButton(),
+          this.historyButton(),
           h('button', { onclick: (e) => this.w.copyDebug(e.target), text: 'Copy debug info' })
         )
       );
       return parts;
+    }
+
+    historyButton() {
+      return h('button', {
+        onclick: () => {
+          this.showHistory = !this.showHistory;
+          this.render();
+        },
+        text: this.showHistory ? 'Hide history' : 'History',
+      });
+    }
+
+    historyView() {
+      const hist = Object.assign(Core.emptyHistory(), this.w.history || {});
+      const box = h('div', { class: 'history' });
+      if (!hist.since) {
+        box.appendChild(h('div', { class: 'note', text: 'No history yet. It starts with the first check.' }));
+        return box;
+      }
+      const days = Object.keys(hist.days).sort();
+      const total = days.reduce((a, k) => a + hist.days[k].checks, 0);
+      box.appendChild(
+        h('div', { class: 'meta', text: `Recording since ${fmtDateTime(hist.since)} · ${total.toLocaleString()} checks · last check ${fmtDateTime(hist.lastCheckAt)}` })
+      );
+
+      box.appendChild(h('h4', { text: 'Times it was in stock' }));
+      const sights = hist.sightings.slice(-15).reverse();
+      if (!sights.length) {
+        box.appendChild(h('div', { class: 'note', text: 'Never seen in stock yet. The daily counts below show it has been checking.' }));
+      }
+      for (const x of sights) {
+        let outcome;
+        if (!x.matched) outcome = `Skipped: ${x.note || 'did not match your rules'}`;
+        else if (x.alerted) {
+          const resp =
+            x.response === 'none'
+              ? 'no response'
+              : x.response
+                ? `you ${x.response} at ${fmtTime(x.responseAt)}`
+                : 'waiting for you';
+          outcome = `Alerted you · ${resp}`;
+        } else outcome = x.note ? `Matched · ${x.note}` : 'Matched';
+        const seen = x.checks > 1 ? `seen ${x.checks}× over ${fmtAgo(x.lastSeen - x.start)}` : 'seen once';
+        const dur = x.end !== null ? `${seen}, gone by ${fmtTime(x.end)}` : `${seen}, still in stock at the last check`;
+        box.appendChild(
+          h(
+            'div',
+            { class: x.matched ? 'sight hit' : 'sight' },
+            h('b', { text: `${fmtDateTime(x.start)} · ${Core.fmtMoney(x.price)}` }),
+            x.seller ? ` · ${x.seller}` : '',
+            h('div', { text: `${outcome} · ${dur}` })
+          )
+        );
+      }
+
+      box.appendChild(h('h4', { text: 'Checks per day (Pacific dates)' }));
+      for (const k of days.slice(-7).reverse()) {
+        const d = hist.days[k];
+        const gaps = hist.gaps.filter((g) => Core.timeParts(new Date(g.from)).dateKey === k);
+        const gapMs = gaps.reduce((a, g) => a + (g.to - g.from), 0);
+        const bits = [`${d.checks.toLocaleString()} checks`];
+        if (d.inStock) bits.push(`in stock on ${d.inStock}`);
+        if (d.blocks) bits.push(`${d.blocks} bot checks`);
+        if (d.errors) bits.push(`${d.errors} errors`);
+        if (gapMs) bits.push(`not checking for ${fmtAgo(gapMs)}`);
+        const label = new Date(k + 'T12:00:00').toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+        box.appendChild(h('div', { class: gapMs ? 'day gap' : 'day', text: `${label}: ${bits.join(' · ')}` }));
+      }
+
+      const gaps = hist.gaps.slice(-5).reverse();
+      if (gaps.length) {
+        box.appendChild(h('h4', { text: 'Recent gaps (Mac asleep, Chrome closed, tab away…)' }));
+        for (const g of gaps) {
+          box.appendChild(h('div', { class: 'day gap', text: `${fmtDateTime(g.from)} → ${fmtDateTime(g.to)} (${fmtAgo(g.to - g.from)})` }));
+        }
+      }
+      box.appendChild(
+        h(
+          'div',
+          { class: 'btns' },
+          h('button', { onclick: (e) => this.w.copyHistory(e.target), text: 'Copy history' }),
+          h('button', { class: 'danger', onclick: () => this.w.clearHistory(), text: 'Clear history' })
+        )
+      );
+      return box;
     }
 
     settingsButton() {
@@ -1331,6 +1564,27 @@
       return next;
     }
 
+    get history() {
+      return Store.get('history:' + this.id, null);
+    }
+
+    editHistory(fn) {
+      Store.set('history:' + this.id, fn(this.history));
+    }
+
+    recordHistory(status, offer, summary, s) {
+      const w = this.record || {};
+      const gapMs = Core.gapThresholdMs(s || getSettings(), w.consecutiveErrors || 0);
+      this.editHistory((hh) => Core.recordCheck(hh, { at: Date.now(), status, offer, summary, gapMs }));
+    }
+
+    markSightingResponse(response) {
+      const hh = this.history;
+      const last = hh && hh.sightings && hh.sightings[hh.sightings.length - 1];
+      if (!last || !last.alerted || last.response) return;
+      this.editHistory((x) => Core.updateLatestSighting(x, { response, responseAt: Date.now() }));
+    }
+
     pageName() {
       const t = (document.title || '').replace(/\s*-\s*Walmart\.com\s*$/i, '').trim();
       return t || `Walmart item ${this.id}`;
@@ -1490,6 +1744,8 @@
         }
         if (s.autoResumeMin > 0 && now - w.foundAt >= s.autoResumeMin * 60000) {
           this.stopAlarm();
+          if (!w.ackAt) this.markSightingResponse('none');
+          this.editHistory((hh) => Core.markResumed(hh));
           this.save({ status: 'watching', foundAt: null });
           addLog(`Resumed watching automatically (${s.autoResumeMin} min after the find)`);
         }
@@ -1499,16 +1755,25 @@
         const cur = this.record;
         if (tp.hour >= s.heartbeatHour && cur.lastHeartbeatDay !== tp.dateKey) {
           const st = cur.stats || {};
+          const hs = Core.historySummary(this.history, st.since || now);
           this.save({ lastHeartbeatDay: tp.dateKey, stats: this.freshStats() });
+          const seen = hs.sightings.length
+            ? `Seen in stock ${hs.sightings.length}x: ` +
+              hs.sightings
+                .slice(-3)
+                .map((x) => `${fmtDateTime(x.start)} ${Core.fmtMoney(x.price)}${x.matched ? (x.alerted ? ' (alerted you)' : '') : ' (skipped)'}`)
+                .join('; ')
+            : 'Not seen in stock.';
           push({
-            title: 'Walmart Watcher is still running',
+            title: hs.matched.length ? `Watcher: found ${hs.matched.length}x since last report` : 'Walmart Watcher is still running',
             message:
               `${cur.name || 'Item ' + this.id}\n` +
               `Since ${new Date(st.since || now).toLocaleString()}: ${st.checks || 0} checks, ` +
-              `${st.deals || 0} finds, ${st.blocks || 0} bot checks, ${st.errors || 0} errors.\n` +
-              `Last result: ${cur.last ? cur.last.summary : 'none yet'}`,
-            priority: 2,
-            tags: ['white_check_mark'],
+              `${st.blocks || 0} bot checks, ${st.errors || 0} errors` +
+              (hs.gapMs ? `, not checking for ${fmtAgo(hs.gapMs)} total` : '') +
+              `.\n${seen}\nLast result: ${cur.last ? cur.last.summary : 'none yet'}`,
+            priority: hs.matched.length ? 3 : 2,
+            tags: [hs.matched.length ? 'package' : 'white_check_mark'],
           });
         }
       }
@@ -1574,6 +1839,7 @@
         stats,
         last: { at: Date.now(), status: 'error', summary: msg },
       });
+      this.recordHistory('error', null, msg);
       addLog(msg, 'warn');
       this.maybeProblemPush(n, `${n} checks in a row failed. Latest: ${msg}`);
     }
@@ -1607,6 +1873,8 @@
       };
       const patch = { last, stats };
       if (res.name) patch.name = res.name;
+      const seenOffer = ev.best || res.offers.find((o) => o.available === true) || null;
+      this.recordHistory(ev.status, seenOffer, ev.summary, s);
       const prevStatus = w.last && w.last.status;
       if (prevStatus !== ev.status) addLog(ev.summary, ev.status === 'deal' ? 'deal' : ev.status === 'blocked' || ev.status === 'unknown' ? 'warn' : 'info');
 
@@ -1675,9 +1943,11 @@
         )
       );
       if (recentlyAlerted) {
+        this.editHistory((hh) => Core.updateLatestSighting(hh, { note: 'already alerted you a few minutes earlier' }));
         addLog('Still in stock (already alerted, not alerting again yet)');
         return;
       }
+      this.editHistory((hh) => Core.updateLatestSighting(hh, { alerted: true }));
       this.fireAlerts(ev.best, s);
       if (s.mode === 'background' && s.openTabOnFound) openTab(w.url);
       else highlightBuyButton();
@@ -1729,6 +1999,7 @@
         consecutiveUnknown: 0,
         lastHeartbeatDay: tp.dateKey,
       });
+      this.editHistory((hh) => Core.markResumed(hh));
       this.writeLease();
       this.leader = true;
       this.checkedThisPage = false;
@@ -1757,14 +2028,17 @@
       this.panel.render();
     }
 
-    acknowledge() {
+    acknowledge(response = 'stopped the alarm') {
       this.stopAlarm();
+      if (!(this.record || {}).ackAt) this.markSightingResponse(response);
       this.save({ ackAt: Date.now() });
       this.panel.render();
     }
 
     resume() {
       this.stopAlarm();
+      if (!(this.record || {}).ackAt) this.markSightingResponse('resumed watching');
+      this.editHistory((hh) => Core.markResumed(hh));
       this.save({ status: 'watching', foundAt: null, ackAt: Date.now() });
       this.checkedThisPage = true; // current page is stale; reload mode will reload first
       addLog('Resumed watching');
@@ -1782,7 +2056,7 @@
     }
 
     openProduct() {
-      this.acknowledge();
+      this.acknowledge('opened the product page');
       const w = this.record;
       if (Core.itemIdFromUrl(location.href) === this.id && getSettings().mode === 'reload') highlightBuyButton();
       else openTab(w.url);
@@ -1814,6 +2088,51 @@
       }, 200);
     }
 
+    async copyText(text, btn) {
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch (e) {
+        const ta = h('textarea', { value: text });
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        ta.remove();
+      }
+      if (btn) btn.textContent = 'Copied!';
+      setTimeout(() => this.panel.render(), 1500);
+    }
+
+    copyHistory(btn) {
+      const hist = Object.assign(Core.emptyHistory(), this.history || {});
+      const lines = [`Walmart Restock Watcher history: ${(this.record || {}).name || this.id}`];
+      lines.push(`Recording since ${fmtDateTime(hist.since)}; last check ${fmtDateTime(hist.lastCheckAt)}`, '', 'IN STOCK SIGHTINGS');
+      if (!hist.sightings.length) lines.push('  none');
+      for (const x of hist.sightings) {
+        lines.push(
+          `  ${new Date(x.start).toLocaleString()}  ${Core.fmtMoney(x.price)}  ${x.seller || ''}  ` +
+            `${x.matched ? (x.alerted ? 'ALERTED' : 'matched') : 'skipped: ' + (x.note || '')}` +
+            `${x.response ? ' / you ' + (x.response === 'none' ? 'did not respond' : x.response) : ''}` +
+            `  last seen ${new Date(x.lastSeen).toLocaleTimeString()}${x.end ? ', gone by ' + new Date(x.end).toLocaleTimeString() : ''}`
+        );
+      }
+      lines.push('', 'CHECKS PER DAY (Pacific)');
+      for (const k of Object.keys(hist.days).sort()) {
+        const d = hist.days[k];
+        lines.push(`  ${k}  checks ${d.checks}  in-stock ${d.inStock}  bot-checks ${d.blocks}  errors ${d.errors}  unreadable ${d.unknown}`);
+      }
+      lines.push('', 'GAPS (not checking)');
+      if (!hist.gaps.length) lines.push('  none');
+      for (const g of hist.gaps) lines.push(`  ${new Date(g.from).toLocaleString()} -> ${new Date(g.to).toLocaleString()} (${fmtAgo(g.to - g.from)})`);
+      this.copyText(lines.join('\n'), btn);
+    }
+
+    clearHistory() {
+      if (!window.confirm('Clear the in-stock history and daily counts for this item?')) return;
+      Store.set('history:' + this.id, null);
+      addLog('History cleared');
+      this.panel.render();
+    }
+
     async copyDebug(btn) {
       const html = this.lastHtml || document.documentElement.outerHTML;
       const res = Core.analyze(html, { url: location.href, status: 200, itemId: this.id, debug: true });
@@ -1829,18 +2148,7 @@
         analysis: res,
         evaluation: Core.evaluate(res, s),
       };
-      const text = JSON.stringify(report, null, 2);
-      try {
-        await navigator.clipboard.writeText(text);
-      } catch (e) {
-        const ta = h('textarea', { value: text });
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        ta.remove();
-      }
-      if (btn) btn.textContent = 'Copied!';
-      setTimeout(() => this.panel.render(), 1500);
+      this.copyText(JSON.stringify(report, null, 2), btn);
     }
   }
 
@@ -1863,6 +2171,14 @@
     const pushNow = !w.lastBlockPushAt || Date.now() - w.lastBlockPushAt > 30 * 60000;
     if (pushNow) patch.lastBlockPushAt = Date.now();
     Store.set(key, Object.assign({}, w, patch));
+    Store.set(
+      'history:' + id,
+      Core.recordCheck(Store.get('history:' + id, null), {
+        at: Date.now(),
+        status: 'blocked',
+        gapMs: Core.gapThresholdMs(s, w.consecutiveErrors || 0),
+      })
+    );
     addLog('Walmart is asking for a human check', 'warn');
     if (pushNow) {
       push({

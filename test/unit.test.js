@@ -233,3 +233,131 @@ test('dealKey distinguishes offers', () => {
   assert.notEqual(Core.dealKey({ price: 477, seller: 'Walmart.com' }), Core.dealKey({ price: 480, seller: 'Walmart.com' }));
   assert.equal(Core.dealKey(null), '');
 });
+
+// ---------- history ----------
+const T0 = Date.parse('2026-09-26T17:00:00Z'); // 10:00 PT
+const MIN = 60000;
+const offerAt = (price, seller = 'Walmart.com') => ({ price, seller, condition: 'Open box' });
+
+function replay(steps, start = null) {
+  let h = start;
+  for (const [t, status, offer, summary] of steps) {
+    h = Core.recordCheck(h, { at: T0 + t, status, offer, summary, gapMs: 5 * MIN });
+  }
+  return h;
+}
+
+test('history: a deal sighting opens, stays open, and closes when out of stock', () => {
+  const h = replay([
+    [0, 'out-of-stock'],
+    [0.3 * MIN, 'deal', offerAt(477.04)],
+    [0.6 * MIN, 'deal', offerAt(477.04)],
+    [1 * MIN, 'out-of-stock'],
+    [1.3 * MIN, 'out-of-stock'],
+  ]);
+  assert.equal(h.sightings.length, 1);
+  const x = h.sightings[0];
+  assert.equal(x.price, 477.04);
+  assert.equal(x.matched, true);
+  assert.equal(x.checks, 2);
+  assert.equal(x.start, T0 + 0.3 * MIN);
+  assert.equal(x.lastSeen, T0 + 0.6 * MIN);
+  assert.equal(x.end, T0 + 1 * MIN);
+  const day = h.days['2026-09-26'];
+  assert.equal(day.checks, 5);
+  assert.equal(day.inStock, 2);
+  assert.equal(h.since, T0);
+});
+
+test('history: skipped sightings are recorded with the reason', () => {
+  const h = replay([[0, 'in-stock-filtered', offerAt(749.99), 'In stock but skipped: $749.99 is above your $500.00 max']]);
+  assert.equal(h.sightings.length, 1);
+  assert.equal(h.sightings[0].matched, false);
+  assert.equal(h.sightings[0].note, '$749.99 is above your $500.00 max');
+});
+
+test('history: a new price or seller starts a new sighting', () => {
+  const h = replay([
+    [0, 'deal', offerAt(477.04)],
+    [1 * MIN, 'deal', offerAt(455)],
+    [2 * MIN, 'in-stock-filtered', offerAt(455, 'Reseller'), 'skipped'],
+  ]);
+  assert.equal(h.sightings.length, 3);
+  assert.equal(h.sightings[0].end, T0 + 1 * MIN);
+  assert.equal(h.sightings[1].end, T0 + 2 * MIN);
+  assert.equal(h.sightings[2].end, null);
+});
+
+test('history: errors, bot checks and unreadable pages do not close a sighting', () => {
+  const h = replay([
+    [0, 'deal', offerAt(477.04)],
+    [1 * MIN, 'error'],
+    [2 * MIN, 'blocked'],
+    [3 * MIN, 'unknown'],
+  ]);
+  assert.equal(h.sightings[0].end, null);
+  const d = h.days['2026-09-26'];
+  assert.deepEqual([d.errors, d.blocks, d.unknown], [1, 1, 1]);
+});
+
+test('history: gaps are recorded, but not after an intentional pause', () => {
+  let h = replay([
+    [0, 'out-of-stock'],
+    [1 * MIN, 'out-of-stock'],
+    [61 * MIN, 'out-of-stock'], // an hour of silence: Mac asleep
+  ]);
+  assert.equal(h.gaps.length, 1);
+  assert.deepEqual(h.gaps[0], { from: T0 + 1 * MIN, to: T0 + 61 * MIN });
+  h = Core.markResumed(h);
+  h = replay([[200 * MIN, 'out-of-stock']], h);
+  assert.equal(h.gaps.length, 1, 'no gap after markResumed');
+});
+
+test('history: gap threshold allows error backoff', () => {
+  const s = Core.normalizeSettings({});
+  assert.equal(Core.gapThresholdMs(s, 0), 5 * MIN);
+  assert.equal(Core.gapThresholdMs(s, 3), 16 * MIN);
+  assert.equal(Core.gapThresholdMs(Core.normalizeSettings({ offMinSec: 300, offMaxSec: 600 }), 0), 40 * MIN);
+});
+
+test('history: days roll over at Pacific midnight and are capped', () => {
+  const lateNight = Date.parse('2026-09-27T06:59:00Z'); // 23:59 PT Sep 26
+  let h = Core.recordCheck(null, { at: lateNight, status: 'out-of-stock' });
+  h = Core.recordCheck(h, { at: lateNight + 2 * MIN, status: 'out-of-stock' });
+  assert.deepEqual(Object.keys(h.days).sort(), ['2026-09-26', '2026-09-27']);
+  let big = null;
+  for (let i = 0; i < 100; i++) big = Core.recordCheck(big, { at: T0 + i * 86400000, status: 'out-of-stock' });
+  assert.equal(Object.keys(big.days).length, 90);
+});
+
+test('history: sightings list is capped', () => {
+  let h = null;
+  for (let i = 0; i < 250; i++) {
+    h = Core.recordCheck(h, { at: T0 + i * 2 * MIN, status: 'deal', offer: offerAt(400 + i) });
+  }
+  assert.equal(h.sightings.length, 200);
+  assert.equal(h.sightings[199].price, 649);
+});
+
+test('history: updateLatestSighting and summary', () => {
+  let h = replay([
+    [0, 'in-stock-filtered', offerAt(749.99), 'over max'],
+    [1 * MIN, 'out-of-stock'],
+    [2 * MIN, 'deal', offerAt(477.04)],
+  ]);
+  h = Core.updateLatestSighting(h, { alerted: true, response: 'none' });
+  assert.equal(h.sightings[1].alerted, true);
+  assert.equal(h.sightings[0].alerted, false, 'only the latest is touched');
+  const sum = Core.historySummary(h, T0 + 1.5 * MIN);
+  assert.equal(sum.sightings.length, 1);
+  assert.equal(sum.matched.length, 1);
+  assert.deepEqual(Core.updateLatestSighting(null, { a: 1 }).sightings, []);
+});
+
+test('history: input is not mutated', () => {
+  const h1 = replay([[0, 'deal', offerAt(477.04)]]);
+  const snapshot = JSON.stringify(h1);
+  Core.recordCheck(h1, { at: T0 + MIN, status: 'out-of-stock' });
+  Core.updateLatestSighting(h1, { alerted: true });
+  assert.equal(JSON.stringify(h1), snapshot);
+});
