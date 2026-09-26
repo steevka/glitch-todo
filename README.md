@@ -22,8 +22,9 @@ Target listing: <https://www.walmart.com/ip/18235967161?conditionGroupCode=3>
 - If it's **in stock, sold by Walmart, and at or under your max price**
   (default **$600**):
   - it **stops checking**
-  - sends an **urgent push to your phone** (tap it to open the listing in the
-    Walmart app), repeated twice more if you don't react
+  - sends a Pushover **emergency push** to your phone that repeats every 30
+    seconds until you acknowledge it in the Pushover app (up to 10 minutes).
+    Tap its link to open the listing
   - plays a **siren**, shows a **desktop notification** and flashes the tab
     title
   - opens a **fresh tab** of the listing with the Buy now button outlined in
@@ -57,11 +58,6 @@ Target listing: <https://www.walmart.com/ip/18235967161?conditionGroupCode=3>
    Tampermonkey shows an install page; click **Install**. It then checks that
    link for updates automatically (you can force a check from the Tampermonkey
    dashboard → *Last updated* column).
-   - If the repo is private, the link won't work. Instead, open
-     [`walmart-watcher.user.js`](walmart-watcher.user.js) on GitHub, click
-     **Raw**, copy everything, then Tampermonkey icon → **Create a new
-     script…** → paste over the template → **Cmd+S**. Updates are manual that
-     way.
 
 ### 2. Phone alerts (Pushover)
 1. Install **Pushover** on your phone and sign in. Your **user key** is shown
@@ -108,7 +104,7 @@ Keep both keys private; anyone with the app token can push to your phone.
 | Button | What it does |
 |---|---|
 | Start watching / Stop | Turns watching on or off for this item |
-| Stop alarm | Silences the siren and cancels the reminder pushes |
+| Stop alarm | Silences the siren on the Mac and cancels the watcher's own reminder pushes. The Pushover emergency push keeps repeating until you acknowledge it on your phone |
 | Resume watching | Starts checking again after a find |
 | Test alerts | Sends a test push, notification and siren |
 | Settings | Price limits, speed, Pushover keys, sound and more |
@@ -143,10 +139,11 @@ erase it; only **Clear history** does.
 | Max price | $600 | The Redditor paid $477.04 |
 | Min price | $100 | Ignores junk like accessories |
 | Only "sold by Walmart" | on | Skips marketplace resellers |
-| Only if the page says "Open box" | off | The link already selects Open Box. Turn this on only if you watch the main listing |
+| Only if the page says "Open box" | off | **Leave this off.** The link already selects Open Box, and on the real page the parser currently reads the condition as "New" (see Known issues), so turning it on blocks every alert |
 | Fast hours (Pacific) | 07:00–13:00 | Set start = end to use the fast speed all day |
 | Fast speed | 15–25 s | Minimum allowed is 5 s. Faster tends to trigger Walmart's bot check |
 | Slow speed | 45–75 s | Used outside fast hours |
+| Reminder pushes | 2 | Extra pushes if you don't react. Pushover's emergency repeats already cover this, so 0 is fine |
 | How to check | Background | "Reload the tab" works like the Redditor's Firefox refresher. Use it if background checks keep hitting bot checks |
 
 ## Data use
@@ -164,12 +161,43 @@ reload mode, multiple tabs, reminders, auto-resume, an unreadable page,
 restarts and the history view.
 
 ```sh
-npm test            # unit tests (Node 18+)
-npm run test:e2e    # browser tests (needs Playwright + Chromium)
+npm install                      # once
+npx playwright install chromium  # once, and again after Playwright upgrades
+npm test                         # unit tests (Node 18+)
+npm run test:e2e                 # browser tests
 ```
 
-Walmart's real pages couldn't be fetched while this was built, so the parser
-reads three independent sources (Next.js page data, schema.org JSON-LD,
-microdata) and alerts when any of them shows a match. If a real page ever
-reads as "Couldn't read price/stock", use **Copy debug info**. The report
-includes the page's data layout, which is what's needed to fix the parser.
+Tampermonkey updates only when `@version` in the script header goes up, so
+bump it (and `VERSION` in the script and `package.json`) on every change you
+push to the `glitch` branch.
+
+### What the real page looks like
+
+Checked against the live listing on Sep 26, 2026:
+
+- The product data is in the page's `__NEXT_DATA__` script at
+  `props.pageProps.initialData.data.product`. That's what the watcher reads.
+- There is **no schema.org Product JSON-LD** on the page, so the JSON-LD
+  source never contributes. Microdata is also absent.
+- Background checks go through: repeated fetches returned the full page in
+  about a second, with no bot check.
+- The embedded data can run ahead of the visible page. It said in stock at
+  $1,369.99 from a marketplace seller while the buy box showed no price and
+  no Add to cart.
+
+### Known issues
+
+- **Condition is misread.** The product's `conditionType` says "New" on the
+  Open Box listing. The real condition is in `gradingLabel` ("Open Box") and
+  `conditionV2.groupCode` (3). This is why the "Open box" setting should
+  stay off.
+- **Per-condition offers are ignored.** `product.conditionOffers[]` holds one
+  entry per condition, but with shapes the parser doesn't read:
+  `availabilityStatus: {value}`, `price: {price}`, `condition: {text}`. A
+  Walmart-sold open-box offer listed only there would be missed.
+- The test fixtures still model an idealized page with JSON-LD, not the real
+  shape above.
+
+If a real page ever reads as "Couldn't read price/stock", use **Copy debug
+info**. The report includes the page's data layout, which is what's needed to
+fix the parser.
