@@ -20,7 +20,7 @@ Target listing: <https://www.walmart.com/ip/18235967161?conditionGroupCode=3>
   and condition from the data Walmart embeds in the page. Your tab doesn't
   reload.
 - If it's **in stock, sold by Walmart, and at or under your max price**
-  (default **$500**):
+  (default **$600**):
   - it **stops checking**
   - sends an **urgent push to your phone** (tap it to open the listing in the
     Walmart app), repeated twice more if you don't react
@@ -136,7 +136,7 @@ erase it; only **Clear history** does.
 
 | Setting | Default | Notes |
 |---|---|---|
-| Max price | $500 | The Redditor paid $477.04 |
+| Max price | $600 | The Redditor paid $477.04 |
 | Min price | $100 | Ignores junk like accessories |
 | Only "sold by Walmart" | on | Skips marketplace resellers |
 | Only if the page says "Open box" | off | The link already selects Open Box. Turn this on only if you watch the main listing |

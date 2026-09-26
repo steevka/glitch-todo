@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Walmart Restock Watcher
 // @namespace    https://github.com/steevka/glitch-todo
-// @version      1.1.0
+// @version      1.1.1
 // @description  Watches a Walmart product page (built for the PS5 Pro Open Box) and alerts you with a siren, a desktop notification and a phone push the moment it is in stock under your price. It never buys anything for you.
 // @author       steevka
 // @match        https://www.walmart.com/*
@@ -30,12 +30,12 @@
    * APIs in here so it can be unit tested in Node (see test/unit.test.js).
    * ==================================================================== */
   const Core = (() => {
-    const VERSION = '1.1.0';
+    const VERSION = '1.1.1';
     const TZ = 'America/Los_Angeles';
     const MIN_INTERVAL_SEC = 5;
 
     const DEFAULT_SETTINGS = {
-      maxPrice: 500,
+      maxPrice: 600,
       minPrice: 100,
       mode: 'background', // 'background' = fetch page quietly; 'reload' = reload the tab
       peakStart: '07:00', // Pacific time

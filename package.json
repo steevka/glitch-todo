@@ -1,6 +1,6 @@
 {
   "name": "walmart-restock-watcher",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "private": true,
   "description": "Tampermonkey userscript that alerts you when a Walmart item (PS5 Pro Open Box) is in stock under your price.",
   "scripts": {

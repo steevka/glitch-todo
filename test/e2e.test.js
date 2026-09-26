@@ -77,9 +77,9 @@ test('over max price never alerts; raising the max in settings does', async () =
     await h.page.getByRole('button', { name: 'Start watching' }).click();
     await h.waitFor(() => h.fetches().length >= 4, 8000, 'checks');
     assert.equal(h.pushes((b) => b.priority === 5).length, 0);
-    assert.match(await h.panelText(), /above your \$500\.00 max/);
+    assert.match(await h.panelText(), /above your \$600\.00 max/);
     await h.page.getByRole('button', { name: 'History' }).click();
-    assert.match(await h.panelText(), /\$749\.99 · Walmart\.com\s*Skipped: \$749\.99 is above your \$500\.00 max · seen \d+× over [^,]+, still in stock/);
+    assert.match(await h.panelText(), /\$749\.99 · Walmart\.com\s*Skipped: \$749\.99 is above your \$600\.00 max · seen \d+× over [^,]+, still in stock/);
     await h.page.getByRole('button', { name: 'Hide history' }).click();
 
     // Open settings, type, and make sure periodic re-renders don't wipe the input
