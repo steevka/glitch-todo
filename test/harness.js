@@ -19,7 +19,8 @@ const FAST = {
   peakMaxSec: 0.6,
   offMinSec: 0.4,
   offMaxSec: 0.6,
-  ntfyTopic: 'test-topic-123',
+  pushoverUser: 'u' + 'A'.repeat(29),
+  pushoverToken: 'a' + 'B'.repeat(29),
   heartbeatHour: -1,
 };
 
@@ -45,7 +46,11 @@ function gmShim(settings) {
     });
     window.GM_addValueChangeListener = (k, fn) => { listeners.push({ k, fn, id: ++lid }); return lid; };
     window.GM_removeValueChangeListener = (id) => { const i = listeners.findIndex((l) => l.id === id); if (i >= 0) listeners.splice(i, 1); };
-    window.GM_xmlhttpRequest = (d) => { window.__wwRecord('push', { url: d.url, body: JSON.parse(d.data) }).then(() => d.onload({ status: 200 })); };
+    window.GM_xmlhttpRequest = (d) => {
+      const body = Object.fromEntries(new URLSearchParams(d.data));
+      for (const k of ['priority', 'retry', 'expire']) if (k in body) body[k] = Number(body[k]);
+      window.__wwRecord('push', { url: d.url, body }).then(() => d.onload({ status: 200, responseText: '{"status":1}' }));
+    };
     window.GM_notification = (d) => { window.__wwRecord('notify', { title: d.title, text: d.text }); };
     window.GM_openInTab = (u) => { window.__wwRecord('openTab', { url: u }); };
   })();`;

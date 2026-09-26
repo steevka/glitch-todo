@@ -178,8 +178,8 @@ test('settings are clamped and sanitized', () => {
     peakMinSec: 1,
     peakMaxSec: 0,
     offMinSec: 'abc',
-    ntfyTopic: 'bad topic!',
-    ntfyServer: 'javascript:alert(1)',
+    pushoverUser: 'bad key!',
+    pushoverToken: ' ' + 'k'.repeat(30) + ' ',
     mode: 'weird',
     maxPrice: '450',
     minPrice: 9999,
@@ -188,13 +188,13 @@ test('settings are clamped and sanitized', () => {
   assert.equal(s.peakMinSec, 5);
   assert.equal(s.peakMaxSec, 5);
   assert.equal(s.offMinSec, 45);
-  assert.equal(s.ntfyTopic, '');
-  assert.equal(s.ntfyServer, 'https://ntfy.sh');
+  assert.equal(s.pushoverUser, '');
+  assert.equal(s.pushoverToken, 'k'.repeat(30), 'keys are trimmed');
   assert.equal(s.mode, 'background');
   assert.equal(s.maxPrice, 450);
   assert.equal(s.minPrice, 450);
   assert.equal(s.heartbeatHour, 23);
-  assert.equal(Core.normalizeSettings({ ntfyServer: 'https://my.ntfy.example/' }).ntfyServer, 'https://my.ntfy.example');
+  assert.equal(Core.normalizeSettings({ pushoverToken: 'too-short' }).pushoverToken, '');
 });
 
 test('time windows in Pacific time, including wrap-around', () => {

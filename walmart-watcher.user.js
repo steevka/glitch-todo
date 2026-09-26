@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Walmart Restock Watcher
 // @namespace    https://github.com/steevka/glitch-todo
-// @version      1.1.1
+// @version      1.2.0
 // @description  Watches a Walmart product page (built for the PS5 Pro Open Box) and alerts you with a siren, a desktop notification and a phone push the moment it is in stock under your price. It never buys anything for you.
 // @author       steevka
 // @match        https://www.walmart.com/*
@@ -15,8 +15,7 @@
 // @grant        GM_notification
 // @grant        GM_openInTab
 // @grant        window.focus
-// @connect      ntfy.sh
-// @connect      *
+// @connect      api.pushover.net
 // @updateURL    https://raw.githubusercontent.com/steevka/glitch-todo/glitch/walmart-watcher.user.js
 // @downloadURL  https://raw.githubusercontent.com/steevka/glitch-todo/glitch/walmart-watcher.user.js
 // @supportURL   https://github.com/steevka/glitch-todo
@@ -30,7 +29,7 @@
    * APIs in here so it can be unit tested in Node (see test/unit.test.js).
    * ==================================================================== */
   const Core = (() => {
-    const VERSION = '1.1.1';
+    const VERSION = '1.2.0';
     const TZ = 'America/Los_Angeles';
     const MIN_INTERVAL_SEC = 5;
 
@@ -46,8 +45,8 @@
       offMaxSec: 75,
       requireWalmartSeller: true,
       requireOpenBox: false,
-      ntfyServer: 'https://ntfy.sh',
-      ntfyTopic: '',
+      pushoverUser: '', // your Pushover user key (30 characters)
+      pushoverToken: '', // API token of a Pushover application you create
       pushReminders: 2,
       reminderEveryMin: 2,
       sound: true,
@@ -140,11 +139,12 @@
       s.offMaxSec = clampNum(r.offMaxSec, s.offMinSec, 3600, Math.max(s.offMinSec, d.offMaxSec));
       s.requireWalmartSeller = !!r.requireWalmartSeller;
       s.requireOpenBox = !!r.requireOpenBox;
-      let server = String(r.ntfyServer || '').trim().replace(/\/+$/, '');
-      if (!/^https?:\/\/[^\s/]+/i.test(server)) server = d.ntfyServer;
-      s.ntfyServer = server;
-      const topic = String(r.ntfyTopic || '').trim();
-      s.ntfyTopic = /^[-_A-Za-z0-9]{1,64}$/.test(topic) ? topic : '';
+      const key = (v) => {
+        const t = String(v || '').trim();
+        return /^[A-Za-z0-9]{30}$/.test(t) ? t : '';
+      };
+      s.pushoverUser = key(r.pushoverUser);
+      s.pushoverToken = key(r.pushoverToken);
       s.pushReminders = Math.round(clampNum(r.pushReminders, 0, 10, d.pushReminders));
       s.reminderEveryMin = clampNum(r.reminderEveryMin, 0.5, 60, d.reminderEveryMin);
       s.sound = !!r.sound;
@@ -800,12 +800,7 @@
 
   function getSettings() {
     const raw = Store.get('settings', {});
-    const s = Core.normalizeSettings(raw, FLOOR_SEC);
-    if (!s.ntfyTopic) {
-      s.ntfyTopic = 'walmart-watch-' + Math.random().toString(36).slice(2, 12);
-      Store.set('settings', Object.assign({}, raw, { ntfyTopic: s.ntfyTopic }));
-    }
-    return s;
+    return Core.normalizeSettings(raw, FLOOR_SEC);
   }
 
   function saveSettings(patch) {
@@ -950,17 +945,52 @@
     },
   };
 
+  const PUSHOVER_URL = 'https://api.pushover.net/1/messages.json';
+
+  // Pushes are written with a 1–5 priority (5 = urgent). Pushover uses -2..2,
+  // where 2 is "emergency": the phone keeps re-alerting until you acknowledge.
+  function pushoverPriority(p) {
+    return Math.max(-2, Math.min(2, Math.round((typeof p === 'number' ? p : 3) - 3)));
+  }
+
   function pushOnce(payload) {
     const s = getSettings();
     return new Promise((resolve) => {
+      if (!s.pushoverUser || !s.pushoverToken) return resolve('Pushover keys not set');
+      const prio = pushoverPriority(payload.priority);
+      const form = new URLSearchParams({
+        token: s.pushoverToken,
+        user: s.pushoverUser,
+        title: payload.title || '',
+        message: payload.message || '',
+        priority: String(prio),
+      });
+      if (payload.click) {
+        form.set('url', payload.click);
+        form.set('url_title', 'Open the Walmart listing');
+      }
+      if (prio === 2) {
+        form.set('retry', '30'); // re-alert every 30 s...
+        form.set('expire', '600'); // ...for up to 10 min, or until acknowledged
+        form.set('sound', 'siren');
+      }
       try {
         GM_xmlhttpRequest({
           method: 'POST',
-          url: s.ntfyServer,
-          headers: { 'Content-Type': 'application/json' },
-          data: JSON.stringify(Object.assign({ topic: s.ntfyTopic }, payload)),
+          url: PUSHOVER_URL,
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          data: form.toString(),
           timeout: 15000,
-          onload: (r) => resolve(r.status >= 200 && r.status < 300 ? true : `HTTP ${r.status}`),
+          onload: (r) => {
+            if (r.status >= 200 && r.status < 300) return resolve(true);
+            let errors = null;
+            try {
+              errors = JSON.parse(r.responseText).errors;
+            } catch (e) {
+              /* not JSON */
+            }
+            resolve(Array.isArray(errors) && errors.length ? errors.join('; ') : `HTTP ${r.status}`);
+          },
           onerror: () => resolve('network error'),
           ontimeout: () => resolve('timed out'),
         });
@@ -970,7 +1000,7 @@
     });
   }
 
-  // Phone push via ntfy. Urgent pushes are retried a few times.
+  // Phone push via Pushover. Urgent pushes are retried a few times.
   async function push(payload) {
     const tries = payload.priority >= 5 ? 4 : 1;
     let result;
@@ -1117,7 +1147,6 @@
     .settings input, .settings select { font: inherit; padding: 4px 6px; border: 1px solid #cbd5e1; border-radius: 6px; width: 100%; box-sizing: border-box; }
     .settings input[type=checkbox] { width: auto; }
     .settings h4 { margin: 6px 0 0; font-size: 12px; color: #64748b; text-transform: uppercase; letter-spacing: .05em; }
-    .topic { font-family: ui-monospace, Menlo, monospace; background: #f1f5f9; padding: 2px 6px; border-radius: 4px; user-select: all; }
     .seen { font-size: 12px; color: #475569; }
     .seen-hit { color: #15803d; font-weight: 700; }
     .history { display: grid; gap: 4px; border-top: 1px solid #e2e8f0; padding-top: 8px; font-size: 12px; }
@@ -1302,9 +1331,13 @@
         );
       }
       if (this.w.throttleNote) parts.push(h('div', { class: 'warn', text: this.w.throttleNote }));
+      const ps = getSettings();
+      if (!ps.pushoverUser || !ps.pushoverToken) {
+        parts.push(h('div', { class: 'warn', text: 'Phone pushes are off: enter your Pushover user key and app token in Settings.' }));
+      }
       const lp = Store.get('lastPush', null);
       if (lp && !lp.ok && Date.now() - lp.t < 6 * 3600 * 1000) {
-        parts.push(h('div', { class: 'warn', text: `Last phone push failed (${lp.error}). Check the ntfy topic in Settings.` }));
+        parts.push(h('div', { class: 'warn', text: `Last phone push failed (${lp.error}). Check the Pushover keys in Settings.` }));
       }
       parts.push(
         h(
@@ -1480,10 +1513,10 @@
         num('offMinSec', 'Slow: min seconds'),
         num('offMaxSec', 'Slow: max seconds'),
         h('label', {}, 'How to check', mode),
-        h('h4', { text: 'Phone (ntfy app)' }),
-        h('div', { class: 'note' }, 'In the ntfy app, subscribe to topic ', h('span', { class: 'topic', text: s.ntfyTopic }), '. Anyone who knows the topic name can see your alerts, so keep it random.'),
-        txt('ntfyTopic', 'Topic'),
-        txt('ntfyServer', 'Server'),
+        h('h4', { text: 'Phone (Pushover app)' }),
+        h('div', { class: 'note' }, 'Your user key is shown on the Pushover dashboard. The app token comes from an application you create at pushover.net/apps/build (any name, e.g. "Walmart Watcher"). Both are 30 characters.'),
+        txt('pushoverUser', 'User key'),
+        txt('pushoverToken', 'App token'),
         num('pushReminders', 'Reminder pushes if you don’t react'),
         num('reminderEveryMin', 'Minutes between reminders', 0.5),
         num('heartbeatHour', 'Daily "still running" push at hour (PT, -1 off)'),
@@ -1740,7 +1773,7 @@
           push({
             title: `Reminder ${n}: in stock at ${Core.fmtMoney(d.price)}`,
             message: `${w.name || 'Your item'} was in stock at ${fmtTime(w.foundAt)}. Tap to open it.`,
-            priority: 5,
+            priority: 4,
             tags: ['rotating_light'],
             click: w.url,
           });
@@ -2082,7 +2115,7 @@
         tags: ['bell'],
         click: location.href,
       }).then((ok) => {
-        addLog(ok ? 'Test push sent to your phone' : 'Test push FAILED, check the ntfy topic', ok ? 'info' : 'warn');
+        addLog(ok ? 'Test push sent to your phone' : 'Test push FAILED, check the Pushover keys', ok ? 'info' : 'warn');
       });
       if (s.desktopNotify) desktopNotify('Test alert', 'Desktop notifications work.');
       setTimeout(() => {
@@ -2145,7 +2178,7 @@
         at: new Date().toISOString(),
         page: location.href,
         record: Object.assign({}, this.record, { url: undefined }),
-        settings: Object.assign({}, s, { ntfyTopic: '(hidden)' }),
+        settings: Object.assign({}, s, { pushoverUser: '(hidden)', pushoverToken: '(hidden)' }),
         worker: Timer.usingWorker,
         soundArmed: Sound.armed,
         analysis: res,

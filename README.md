@@ -63,18 +63,22 @@ Target listing: <https://www.walmart.com/ip/18235967161?conditionGroupCode=3>
      script…** → paste over the template → **Cmd+S**. Updates are manual that
      way.
 
-### 2. Phone alerts (ntfy, free, no account)
-1. Install **ntfy** from the App Store.
-2. Open the Walmart listing in Chrome. A **Restock Watcher** panel appears at
-   the bottom left. Click **Settings** and copy the topic name it shows (for
-   example `walmart-watch-k3j9x0a2qd`).
-3. In the ntfy app, tap **+**, paste the topic, and subscribe. Leave the server
-   as the default (`ntfy.sh`).
-4. Allow notifications for ntfy. It's also worth letting ntfy through Focus /
-   Do Not Disturb.
+### 2. Phone alerts (Pushover)
+1. Install **Pushover** on your phone and sign in. Your **user key** is shown
+   at the top of <https://pushover.net> when you're logged in.
+2. Create an application for the watcher at
+   <https://pushover.net/apps/build> (any name, e.g. "Walmart Watcher"). It
+   gives you an **API token**.
+3. Open the Walmart listing in Chrome. A **Restock Watcher** panel appears at
+   the bottom left. Click **Settings**, paste the user key and the app token
+   into the *Phone (Pushover app)* fields, and save.
+4. In the Pushover app, make sure notifications are allowed. The in-stock
+   alert is sent as an **emergency** push: it repeats every 30 seconds for up
+   to 10 minutes, or until you acknowledge it in the app, and uses the siren
+   sound. Emergency pushes also break through Do Not Disturb if you enable
+   that in Pushover's settings.
 
-The topic name works like a password: anyone who knows it can read your alerts.
-Keep the random one.
+Keep both keys private; anyone with the app token can push to your phone.
 
 ### 3. Start it
 1. In the panel, click **Test alerts**. You should get a phone push, a desktop
@@ -107,7 +111,7 @@ Keep the random one.
 | Stop alarm | Silences the siren and cancels the reminder pushes |
 | Resume watching | Starts checking again after a find |
 | Test alerts | Sends a test push, notification and siren |
-| Settings | Price limits, speed, phone topic, sound and more |
+| Settings | Price limits, speed, Pushover keys, sound and more |
 | History | What happened while you were away (see below) |
 | Copy debug info | Copies a report to paste to whoever maintains the script if the watcher can't read the page |
 
