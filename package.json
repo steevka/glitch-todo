@@ -1,16 +1,17 @@
 {
-	"name": "practical-javascript-todos",
-	"version": "0.0.1",
-	"description": "Code for practicaljavascript.net",
-	"main": "server.js",
-	"scripts": {
-		"start": "node server.js"
-	},
-	"dependencies": {
-    "express": "^4.12.4"
-	},
-	"engines": {
-		"node": "4.4.5"
-	},
-	"license": "MIT"
+  "name": "walmart-restock-watcher",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Tampermonkey userscript that alerts you when a Walmart item (PS5 Pro Open Box) is in stock under your price.",
+  "scripts": {
+    "test": "node --test test/unit.test.js",
+    "test:e2e": "node --test --test-concurrency=1 test/e2e.test.js"
+  },
+  "devDependencies": {
+    "playwright": "^1.56.1"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT"
 }
