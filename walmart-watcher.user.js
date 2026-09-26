@@ -17,6 +17,9 @@
 // @grant        window.focus
 // @connect      ntfy.sh
 // @connect      *
+// @updateURL    https://raw.githubusercontent.com/steevka/glitch-todo/glitch/walmart-watcher.user.js
+// @downloadURL  https://raw.githubusercontent.com/steevka/glitch-todo/glitch/walmart-watcher.user.js
+// @supportURL   https://github.com/steevka/glitch-todo
 // ==/UserScript==
 
 (function () {

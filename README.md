@@ -52,10 +52,16 @@ Target listing: <https://www.walmart.com/ip/18235967161?conditionGroupCode=3>
    Chrome versions, turn on **Developer mode** at the top right of
    `chrome://extensions` instead. If you skip this, the script silently won't
    run.
-3. Open [`walmart-watcher.user.js`](walmart-watcher.user.js) on GitHub, click
-   **Raw**, and copy everything (Cmd+A, Cmd+C).
-4. Click the Tampermonkey icon, choose **Create a new script…**, delete the
-   template, paste, and press **Cmd+S**.
+3. Open the **install link**:
+   <https://raw.githubusercontent.com/steevka/glitch-todo/glitch/walmart-watcher.user.js>.
+   Tampermonkey shows an install page; click **Install**. It then checks that
+   link for updates automatically (you can force a check from the Tampermonkey
+   dashboard → *Last updated* column).
+   - If the repo is private, the link won't work. Instead, open
+     [`walmart-watcher.user.js`](walmart-watcher.user.js) on GitHub, click
+     **Raw**, copy everything, then Tampermonkey icon → **Create a new
+     script…** → paste over the template → **Cmd+S**. Updates are manual that
+     way.
 
 ### 2. Phone alerts (ntfy, free, no account)
 1. Install **ntfy** from the App Store.
