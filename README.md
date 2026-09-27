@@ -38,6 +38,8 @@ Target listing: <https://www.walmart.com/ip/18235967161?conditionGroupCode=3>
 - A daily **"still running"** push at 7am Pacific tells you it's alive and
   whether the item showed up in stock since the last one. If that push
   doesn't arrive, the watcher stopped.
+- Optionally, it pings **healthchecks.io** about once a minute, so you get a
+  push within minutes if the watcher goes quiet (see setup step 3).
 - It keeps a **history**, so you can see what happened while you were away (see
   below).
 - If it can't read the page 10 times in a row (for example, if Walmart changed
@@ -76,19 +78,37 @@ Target listing: <https://www.walmart.com/ip/18235967161?conditionGroupCode=3>
 
 Keep both keys private; anyone with the app token can push to your phone.
 
-### 3. Start it
+### 3. Alert if the watcher goes quiet (healthchecks.io, optional)
+The daily push only tells you the next morning that the watcher stopped.
+healthchecks.io tells you within minutes.
+1. Sign up at <https://healthchecks.io> (free) and click **Add Check**.
+2. Set **Period** to 2 minutes and **Grace** to 15 minutes. The grace covers a
+   Walmart bot check, which pauses checking for up to 10 minutes.
+3. Under **Integrations**, add **Pushover** so the alert reaches your phone.
+4. Copy the check's ping URL (`https://hc-ping.com/...`), paste it into the
+   watcher's **Settings → Health check URL**, and save.
+5. Click **Test alerts**: the check on healthchecks.io should turn green.
+
+The watcher pings only while it's watching. **When you click Stop, pause the
+check on healthchecks.io** or it will alert you.
+
+### 4. Start it
 1. In the panel, click **Test alerts**. You should get a phone push, a desktop
-   notification and a short siren. Chrome may ask whether walmart.com can show
-   notifications; click **Allow**.
+   notification and a short siren. Desktop notifications come from
+   Tampermonkey through Chrome, so if none appears, allow notifications for
+   Google Chrome in macOS System Settings → Notifications and check that no
+   Focus mode is on.
 2. Click **Start watching**. You'll get a "Watcher started" push.
 3. Click once anywhere on the page. Chrome only allows sound after a click, and
    the panel reminds you if you haven't.
 
-### 4. Keeping it running 24/7
-- **Keep the Mac awake.** Either go to System Settings → Displays →
-  Advanced… (or Battery → Options on a laptop) and turn on "Prevent automatic
-  sleeping when the display is off", or run `caffeinate -dims` in Terminal
-  and leave that window open. If the Mac sleeps, the watcher stops.
+### 5. Keeping it running 24/7
+- **Keep the Mac awake; the display can sleep.** Either go to System
+  Settings → Displays → Advanced… (or Battery → Options on a laptop) and turn
+  on "Prevent automatic sleeping when the display is off", or run
+  `caffeinate -i` in Terminal and leave that window open. If the Mac sleeps,
+  the watcher stops. If the Mac's sound goes through the monitor, the siren is
+  silent while the monitor sleeps; the phone push still arrives.
 - **Keep Chrome from unloading the tab.** Go to Chrome Settings → Performance →
   Memory Saver → "Always keep these sites active" → add `walmart.com`.
 - **Give it its own window** that stays open and isn't minimized; a second

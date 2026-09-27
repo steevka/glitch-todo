@@ -47,6 +47,10 @@ function gmShim(settings) {
     window.GM_addValueChangeListener = (k, fn) => { listeners.push({ k, fn, id: ++lid }); return lid; };
     window.GM_removeValueChangeListener = (id) => { const i = listeners.findIndex((l) => l.id === id); if (i >= 0) listeners.splice(i, 1); };
     window.GM_xmlhttpRequest = (d) => {
+      if (d.method === 'GET') {
+        window.__wwRecord('hcping', { url: d.url }).then(() => d.onload({ status: 200, responseText: 'OK' }));
+        return;
+      }
       const body = Object.fromEntries(new URLSearchParams(d.data));
       for (const k of ['priority', 'retry', 'expire']) if (k in body) body[k] = Number(body[k]);
       window.__wwRecord('push', { url: d.url, body }).then(() => d.onload({ status: 200, responseText: '{"status":1}' }));
@@ -117,6 +121,7 @@ async function setup(settings = {}) {
     events,
     requests,
     site,
+    hcPings: () => events.filter((e) => e.type === 'hcping'),
     pushes: (pred = () => true) => events.filter((e) => e.type === 'push' && pred(e.data.body)),
     fetches: (p) => requests.filter((r) => r.type === 'fetch' && (!p || r.page === p)),
     docs: (p) => requests.filter((r) => r.type === 'document' && (!p || r.page === p)),

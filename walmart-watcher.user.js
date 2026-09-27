@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Walmart Restock Watcher
 // @namespace    https://github.com/steevka/glitch-todo
-// @version      1.2.0
+// @version      1.3.0
 // @description  Watches a Walmart product page (built for the PS5 Pro Open Box) and alerts you with a siren, a desktop notification and a phone push the moment it is in stock under your price. It never buys anything for you.
 // @author       steevka
 // @match        https://www.walmart.com/*
@@ -16,6 +16,7 @@
 // @grant        GM_openInTab
 // @grant        window.focus
 // @connect      api.pushover.net
+// @connect      hc-ping.com
 // @updateURL    https://raw.githubusercontent.com/steevka/glitch-todo/glitch/walmart-watcher.user.js
 // @downloadURL  https://raw.githubusercontent.com/steevka/glitch-todo/glitch/walmart-watcher.user.js
 // @supportURL   https://github.com/steevka/glitch-todo
@@ -29,7 +30,7 @@
    * APIs in here so it can be unit tested in Node (see test/unit.test.js).
    * ==================================================================== */
   const Core = (() => {
-    const VERSION = '1.2.0';
+    const VERSION = '1.3.0';
     const TZ = 'America/Los_Angeles';
     const MIN_INTERVAL_SEC = 5;
 
@@ -47,6 +48,7 @@
       requireOpenBox: false,
       pushoverUser: '', // your Pushover user key (30 characters)
       pushoverToken: '', // API token of a Pushover application you create
+      healthcheckUrl: '', // healthchecks.io ping URL; pinged about once a minute while watching
       pushReminders: 2,
       reminderEveryMin: 2,
       sound: true,
@@ -145,6 +147,8 @@
       };
       s.pushoverUser = key(r.pushoverUser);
       s.pushoverToken = key(r.pushoverToken);
+      const hc = String(r.healthcheckUrl || '').trim();
+      s.healthcheckUrl = /^https:\/\/[^\s/]+\.[^\s]+$/.test(hc) ? hc : '';
       s.pushReminders = Math.round(clampNum(r.pushReminders, 0, 10, d.pushReminders));
       s.reminderEveryMin = clampNum(r.reminderEveryMin, 0.5, 60, d.reminderEveryMin);
       s.sound = !!r.sound;
@@ -1017,6 +1021,38 @@
     return false;
   }
 
+  // Dead-man's switch: healthchecks.io alerts you when these pings stop
+  // (Mac asleep, Chrome closed, tab unloaded, watcher stopped).
+  const HC_EVERY_MS = 60000;
+  let lastHcAttempt = 0;
+  function pingHealthcheck(force = false) {
+    const s = getSettings();
+    if (!s.healthcheckUrl) return Promise.resolve('no URL set');
+    if (!force && Date.now() - lastHcAttempt < HC_EVERY_MS) return Promise.resolve('skipped');
+    lastHcAttempt = Date.now();
+    return new Promise((resolve) => {
+      const done = (ok, error) => {
+        const prev = Store.get('lastHcPing', null);
+        Store.set('lastHcPing', ok ? { t: Date.now(), ok: true } : { t: Date.now(), ok: false, error });
+        if (!ok && (!prev || prev.ok)) addLog(`Health check ping failed (${error})`, 'warn');
+        if (ok && prev && !prev.ok) addLog('Health check ping working again');
+        resolve(ok ? true : error);
+      };
+      try {
+        GM_xmlhttpRequest({
+          method: 'GET',
+          url: s.healthcheckUrl,
+          timeout: 10000,
+          onload: (r) => (r.status >= 200 && r.status < 300 ? done(true) : done(false, `HTTP ${r.status}`)),
+          onerror: () => done(false, 'network error'),
+          ontimeout: () => done(false, 'timed out'),
+        });
+      } catch (e) {
+        done(false, e.message || 'unavailable');
+      }
+    });
+  }
+
   function desktopNotify(title, text) {
     try {
       GM_notification({
@@ -1335,6 +1371,10 @@
       if (!ps.pushoverUser || !ps.pushoverToken) {
         parts.push(h('div', { class: 'warn', text: 'Phone pushes are off: enter your Pushover user key and app token in Settings.' }));
       }
+      const hcp = Store.get('lastHcPing', null);
+      if (ps.healthcheckUrl && hcp && !hcp.ok && Date.now() - hcp.t < 3600 * 1000) {
+        parts.push(h('div', { class: 'warn', text: `Health check ping failed (${hcp.error}). Check the URL in Settings.` }));
+      }
       const lp = Store.get('lastPush', null);
       if (lp && !lp.ok && Date.now() - lp.t < 6 * 3600 * 1000) {
         parts.push(h('div', { class: 'warn', text: `Last phone push failed (${lp.error}). Check the Pushover keys in Settings.` }));
@@ -1518,6 +1558,8 @@
         txt('pushoverUser', 'User key'),
         txt('pushoverToken', 'App token'),
         num('pushReminders', 'Reminder pushes if you don’t react'),
+        h('div', { class: 'note' }, 'Optional: a healthchecks.io ping URL (https://hc-ping.com/…). The watcher pings it about once a minute while watching, and healthchecks.io alerts you if the pings stop.'),
+        txt('healthcheckUrl', 'Health check URL'),
         num('reminderEveryMin', 'Minutes between reminders', 0.5),
         num('heartbeatHour', 'Daily "still running" push at hour (PT, -1 off)'),
         h('h4', { text: 'This computer' }),
@@ -1758,6 +1800,7 @@
       } else if (w.status === 'blocked' && !this.navigating) {
         this.scheduleReload(s.blockedRetryMin * 60000);
       }
+      if (w.status === 'watching' || w.status === 'found') pingHealthcheck();
       this.panel.render();
     }
 
@@ -2117,6 +2160,11 @@
       }).then((ok) => {
         addLog(ok ? 'Test push sent to your phone' : 'Test push FAILED, check the Pushover keys', ok ? 'info' : 'warn');
       });
+      if (s.healthcheckUrl) {
+        pingHealthcheck(true).then((ok) => {
+          addLog(ok === true ? 'Health check ping sent' : `Health check ping FAILED (${ok})`, ok === true ? 'info' : 'warn');
+        });
+      }
       if (s.desktopNotify) desktopNotify('Test alert', 'Desktop notifications work.');
       setTimeout(() => {
         if (s.sound) Sound.startSiren(s.volume, 3000);
@@ -2178,7 +2226,7 @@
         at: new Date().toISOString(),
         page: location.href,
         record: Object.assign({}, this.record, { url: undefined }),
-        settings: Object.assign({}, s, { pushoverUser: '(hidden)', pushoverToken: '(hidden)' }),
+        settings: Object.assign({}, s, { pushoverUser: '(hidden)', pushoverToken: '(hidden)', healthcheckUrl: s.healthcheckUrl ? '(set)' : '' }),
         worker: Timer.usingWorker,
         soundArmed: Sound.armed,
         analysis: res,

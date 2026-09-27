@@ -284,3 +284,28 @@ test('found but nobody reacts: reminder push, then resumes watching by itself', 
     await h.close();
   }
 });
+
+test('health check: pings about once a minute while watching, on Test alerts, and not after Stop', async () => {
+  const HC = 'https://hc-ping.com/0f3c9a1e-1234-4bcd-9ef0-123456789abc';
+  const h = await setup({ healthcheckUrl: HC });
+  try {
+    await h.page.goto(ITEM);
+    await h.page.getByRole('button', { name: 'Start watching' }).click();
+    await h.waitFor(() => h.hcPings().length === 1, 5000, 'first ping');
+    assert.equal(h.hcPings()[0].data.url, HC);
+    await h.waitFor(() => h.fetches().length >= 4, 8000, 'more checks');
+    assert.equal(h.hcPings().length, 1, 'throttled to one ping a minute, not one per check');
+
+    await h.page.getByRole('button', { name: 'Test alerts' }).click();
+    await h.waitFor(() => h.hcPings().length === 2, 5000, 'test ping');
+    await h.waitFor(async () => /Health check ping sent/.test(await h.panelText()), 5000, 'logged');
+
+    await h.page.getByRole('button', { name: 'Stop' }).click();
+    const n = h.hcPings().length;
+    await new Promise((r) => setTimeout(r, 1500));
+    assert.equal(h.hcPings().length, n, 'no pings after Stop');
+    assert.deepEqual(h.events.filter((e) => e.type === 'pageerror'), []);
+  } finally {
+    await h.close();
+  }
+});

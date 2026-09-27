@@ -361,3 +361,11 @@ test('history: input is not mutated', () => {
   Core.updateLatestSighting(h1, { alerted: true });
   assert.equal(JSON.stringify(h1), snapshot);
 });
+
+test('health check URL: https only, trimmed, blank otherwise', () => {
+  const url = 'https://hc-ping.com/0f3c9a1e-1234-4bcd-9ef0-123456789abc';
+  assert.equal(Core.normalizeSettings({ healthcheckUrl: '  ' + url + ' ' }).healthcheckUrl, url);
+  assert.equal(Core.normalizeSettings({ healthcheckUrl: 'http://hc-ping.com/abc' }).healthcheckUrl, '');
+  assert.equal(Core.normalizeSettings({ healthcheckUrl: 'not a url' }).healthcheckUrl, '');
+  assert.equal(Core.normalizeSettings({}).healthcheckUrl, '');
+});
