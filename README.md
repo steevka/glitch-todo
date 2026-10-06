@@ -22,10 +22,10 @@ Target listing: <https://www.walmart.com/ip/18235967161?conditionGroupCode=3>
 - If it's **in stock, sold by Walmart, and at or under your max price**
   (default **$600**):
   - it **stops checking**
-  - sends a Pushover **emergency push** to your phone that repeats every 30
-    seconds until you acknowledge it in the Pushover app (up to 10 minutes).
-    Tap its link to open the listing
-  - plays a **siren**, shows a **desktop notification** and flashes the tab
+  - sends **one** high-priority Pushover push to your phone with the siren
+    sound (no repeats: the item sells out in seconds). Tap its link to open
+    the listing
+  - plays a **10-second siren**, shows a **desktop notification** and flashes the tab
     title
   - opens a **fresh tab** of the listing with the Buy now button outlined in
     green
@@ -71,10 +71,8 @@ Target listing: <https://www.walmart.com/ip/18235967161?conditionGroupCode=3>
    the bottom left. Click **Settings**, paste the user key and the app token
    into the *Phone (Pushover app)* fields, and save.
 4. In the Pushover app, make sure notifications are allowed. The in-stock
-   alert is sent as an **emergency** push: it repeats every 30 seconds for up
-   to 10 minutes, or until you acknowledge it in the app, and uses the siren
-   sound. Emergency pushes also break through Do Not Disturb if you enable
-   that in Pushover's settings.
+   alert is sent once as a **high-priority** push with the siren sound. High
+   priority bypasses Pushover's quiet hours.
 
 Keep both keys private; anyone with the app token can push to your phone.
 
@@ -124,7 +122,7 @@ check on healthchecks.io** or it will alert you.
 | Button | What it does |
 |---|---|
 | Start watching / Stop | Turns watching on or off for this item |
-| Stop alarm | Silences the siren on the Mac and cancels the watcher's own reminder pushes. The Pushover emergency push keeps repeating until you acknowledge it on your phone |
+| Stop alarm | Silences the siren on the Mac (it stops by itself after 10 seconds anyway) |
 | Resume watching | Starts checking again after a find |
 | Test alerts | Sends a test push, notification and siren |
 | Settings | Price limits, speed, Pushover keys, sound and more |
@@ -163,7 +161,6 @@ erase it; only **Clear history** does.
 | Fast hours (Pacific) | 07:00–13:00 | Set start = end to use the fast speed all day |
 | Fast speed | 15–25 s | Minimum allowed is 5 s. Faster tends to trigger Walmart's bot check |
 | Slow speed | 45–75 s | Used outside fast hours |
-| Reminder pushes | 2 | Extra pushes if you don't react. Pushover's emergency repeats already cover this, so 0 is fine |
 | How to check | Background | "Reload the tab" works like the Redditor's Firefox refresher. Use it if background checks keep hitting bot checks |
 
 ## Data use
@@ -177,7 +174,7 @@ The page parser, deal rules and scheduler are plain functions at the top of
 the script and are covered by unit tests. The end-to-end tests run the real
 script in Chromium against a fake walmart.com, covering in stock, out of
 stock, over price, third-party seller, bot checks (redirect and in place),
-reload mode, multiple tabs, reminders, auto-resume, an unreadable page,
+reload mode, multiple tabs, auto-resume, an unreadable page,
 restarts and the history view.
 
 ```sh

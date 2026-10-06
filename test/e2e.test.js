@@ -23,12 +23,12 @@ test('background mode: watches, detects the deal, stops, alerts everywhere', asy
 
     // It comes in stock
     h.site.kind = 'deal';
-    await h.waitFor(() => h.pushes((b) => b.priority === 2).length === 1, 8000, 'urgent push');
-    const urgent = h.pushes((b) => b.priority === 2)[0].data.body;
+    await h.waitFor(() => h.pushes((b) => b.sound === 'siren').length === 1, 8000, 'urgent push');
+    const urgent = h.pushes((b) => b.sound === 'siren')[0].data.body;
     assert.match(urgent.title, /IN STOCK \$477\.04/);
     assert.equal(urgent.url, CANON);
-    assert.equal(urgent.retry, 30, 'emergency pushes re-alert until acknowledged');
-    assert.equal(urgent.sound, 'siren');
+    assert.equal(urgent.priority, 1, 'high priority, not emergency');
+    assert.ok(!('retry' in urgent) && !('expire' in urgent), 'push alerts once, never repeats');
     assert.ok(h.events.some((e) => e.type === 'notify' && /IN STOCK/.test(e.data.title)), 'desktop notification');
     await h.waitFor(() => h.events.some((e) => e.type === 'openTab'), 3000, 'fresh tab opened');
     assert.equal(h.events.find((e) => e.type === 'openTab').data.url, CANON);
@@ -60,13 +60,13 @@ test('background mode: watches, detects the deal, stops, alerts everywhere', asy
     await h.page.getByRole('button', { name: 'Resume watching' }).click();
     await h.waitFor(() => h.fetches().length > n, 5000, 'resumed checks');
     await new Promise((r) => setTimeout(r, 1500));
-    assert.equal(h.pushes((b) => b.priority === 2).length, 1, 'no duplicate alert for the same offer');
+    assert.equal(h.pushes((b) => b.sound === 'siren').length, 1, 'no duplicate alert for the same offer');
 
     // A different (cheaper) offer is a new alert
     await h.page.getByRole('button', { name: 'Resume watching' }).click();
     h.site.price = 455;
-    await h.waitFor(() => h.pushes((b) => b.priority === 2).length === 2, 8000, 'second urgent push');
-    assert.match(h.pushes((b) => b.priority === 2)[1].data.body.title, /\$455\.00/);
+    await h.waitFor(() => h.pushes((b) => b.sound === 'siren').length === 2, 8000, 'second urgent push');
+    assert.match(h.pushes((b) => b.sound === 'siren')[1].data.body.title, /\$455\.00/);
     assert.deepEqual(h.events.filter((e) => e.type === 'pageerror'), []);
   } finally {
     await h.close();
@@ -80,7 +80,7 @@ test('over max price never alerts; raising the max in settings does', async () =
     await h.page.goto(ITEM);
     await h.page.getByRole('button', { name: 'Start watching' }).click();
     await h.waitFor(() => h.fetches().length >= 4, 8000, 'checks');
-    assert.equal(h.pushes((b) => b.priority === 2).length, 0);
+    assert.equal(h.pushes((b) => b.sound === 'siren').length, 0);
     assert.match(await h.panelText(), /above your \$600\.00 max/);
     await h.page.getByRole('button', { name: 'History' }).click();
     assert.match(await h.panelText(), /\$749\.99 · Walmart\.com\s*Skipped: \$749\.99 is above your \$600\.00 max · seen \d+× over [^,]+, still in stock/);
@@ -93,7 +93,7 @@ test('over max price never alerts; raising the max in settings does', async () =
     await new Promise((r) => setTimeout(r, 2000));
     assert.equal(await max.inputValue(), '800', 'typing survives re-renders');
     await h.page.getByRole('button', { name: 'Save settings' }).click();
-    await h.waitFor(() => h.pushes((b) => b.priority === 2).length === 1, 8000, 'alert after raising max');
+    await h.waitFor(() => h.pushes((b) => b.sound === 'siren').length === 1, 8000, 'alert after raising max');
     assert.deepEqual(h.events.filter((e) => e.type === 'pageerror'), []);
   } finally {
     await h.close();
@@ -148,7 +148,7 @@ test('reload mode: reloads the tab, stops reloading when found, highlights Buy n
     await h.waitFor(() => h.docs().length >= 4, 10000, 'several reloads');
     assert.equal(h.fetches().length, 0, 'reload mode does not fetch in the background');
     h.site.kind = 'deal';
-    await h.waitFor(() => h.pushes((b) => b.priority === 2).length === 1, 10000, 'urgent push');
+    await h.waitFor(() => h.pushes((b) => b.sound === 'siren').length === 1, 10000, 'urgent push');
     const n = h.docs().length;
     await new Promise((r) => setTimeout(r, 3000));
     assert.equal(h.docs().length, n, 'no reloads after the find');
@@ -195,7 +195,7 @@ test('page it cannot read: warns in the panel and pushes once after 10 misses', 
     const n = h.fetches().length;
     await h.waitFor(() => h.fetches().length >= n + 3, 8000, 'keeps checking');
     assert.equal(h.pushes((b) => /needs attention/.test(b.title)).length, 1, 'rate limited');
-    assert.equal(h.pushes((b) => b.priority === 2).length, 0, 'never a false IN STOCK alert');
+    assert.equal(h.pushes((b) => b.sound === 'siren').length, 0, 'never a false IN STOCK alert');
   } finally {
     await h.close();
   }
@@ -256,19 +256,19 @@ test('a duplicated tab (copied sessionStorage) picks a new tab id', async () => 
   }
 });
 
-test('found but nobody reacts: reminder push, then resumes watching by itself', async () => {
-  // reminderEveryMin / autoResumeMin minimums are 0.5 min, so this test takes ~45s.
-  const h = await setup({ pushReminders: 1, reminderEveryMin: 0.5, autoResumeMin: 0.7 });
+test('found but nobody reacts: one push only, then resumes watching by itself', async () => {
+  // autoResumeMin minimum is 0.5 min, so this test takes ~45s.
+  const h = await setup({ autoResumeMin: 0.7 });
   try {
     h.site.kind = 'deal';
     await h.page.goto(ITEM);
     await h.page.getByRole('button', { name: 'Start watching' }).click();
-    await h.waitFor(() => h.pushes((b) => b.priority === 2).length === 1, 8000, 'urgent push');
+    await h.waitFor(() => h.pushes((b) => b.sound === 'siren').length === 1, 8000, 'urgent push');
     h.site.kind = 'oos';
-    await h.waitFor(() => h.pushes((b) => /^Reminder 1/.test(b.title)).length === 1, 50000, 'reminder push');
+    const pushesAtFind = h.pushes().length;
     const n = h.fetches(h.page).length;
-    await h.waitFor(() => h.fetches(h.page).length > n + 1, 30000, 'auto-resumed checks');
-    assert.equal(h.pushes((b) => /^Reminder/.test(b.title)).length, 1, 'only the configured number of reminders');
+    await h.waitFor(() => h.fetches(h.page).length > n + 1, 60000, 'auto-resumed checks');
+    assert.equal(h.pushes().length, pushesAtFind, 'no reminder pushes');
     await h.waitFor(async () => /Out of stock/.test(await h.panelText()), 5000, 'watching again');
 
     // History shows the find, that nobody responded, and that it went away

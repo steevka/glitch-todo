@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Walmart Restock Watcher
 // @namespace    https://github.com/steevka/glitch-todo
-// @version      1.3.0
+// @version      1.4.0
 // @description  Watches a Walmart product page (built for the PS5 Pro Open Box) and alerts you with a siren, a desktop notification and a phone push the moment it is in stock under your price. It never buys anything for you.
 // @author       steevka
 // @match        https://www.walmart.com/*
@@ -49,8 +49,6 @@
       pushoverUser: '', // your Pushover user key (30 characters)
       pushoverToken: '', // API token of a Pushover application you create
       healthcheckUrl: '', // healthchecks.io ping URL; pinged about once a minute while watching
-      pushReminders: 2,
-      reminderEveryMin: 2,
       sound: true,
       volume: 0.7,
       desktopNotify: true,
@@ -149,8 +147,6 @@
       s.pushoverToken = key(r.pushoverToken);
       const hc = String(r.healthcheckUrl || '').trim();
       s.healthcheckUrl = /^https:\/\/[^\s/]+\.[^\s]+$/.test(hc) ? hc : '';
-      s.pushReminders = Math.round(clampNum(r.pushReminders, 0, 10, d.pushReminders));
-      s.reminderEveryMin = clampNum(r.reminderEveryMin, 0.5, 60, d.reminderEveryMin);
       s.sound = !!r.sound;
       s.volume = clampNum(r.volume, 0, 1, d.volume);
       s.desktopNotify = !!r.desktopNotify;
@@ -907,7 +903,7 @@
       o.start(start);
       o.stop(start + dur + 0.02);
     },
-    startSiren(volume, maxMs = 10 * 60 * 1000) {
+    startSiren(volume, maxMs = 10 * 1000) {
       this.stopSiren();
       this.unlock();
       if (!this.ctx) return false;
@@ -951,10 +947,12 @@
 
   const PUSHOVER_URL = 'https://api.pushover.net/1/messages.json';
 
-  // Pushes are written with a 1–5 priority (5 = urgent). Pushover uses -2..2,
-  // where 2 is "emergency": the phone keeps re-alerting until you acknowledge.
+  // Pushes are written with a 1–5 priority (5 = urgent). Pushover uses -2..2;
+  // we cap at 1 ("high", bypasses quiet hours) so each push alerts exactly once.
+  // Pushover's 2 ("emergency") repeats until acknowledged, which is useless
+  // for an item that sells out in seconds.
   function pushoverPriority(p) {
-    return Math.max(-2, Math.min(2, Math.round((typeof p === 'number' ? p : 3) - 3)));
+    return Math.max(-2, Math.min(1, Math.round((typeof p === 'number' ? p : 3) - 3)));
   }
 
   function pushOnce(payload) {
@@ -973,11 +971,7 @@
         form.set('url', payload.click);
         form.set('url_title', 'Open the Walmart listing');
       }
-      if (prio === 2) {
-        form.set('retry', '30'); // re-alert every 30 s...
-        form.set('expire', '600'); // ...for up to 10 min, or until acknowledged
-        form.set('sound', 'siren');
-      }
+      if (payload.priority >= 5) form.set('sound', 'siren');
       try {
         GM_xmlhttpRequest({
           method: 'POST',
@@ -1004,7 +998,8 @@
     });
   }
 
-  // Phone push via Pushover. Urgent pushes are retried a few times.
+  // Phone push via Pushover. An urgent push that fails to send is retried a few
+  // times; one that gets through is never repeated.
   async function push(payload) {
     const tries = payload.priority >= 5 ? 4 : 1;
     let result;
@@ -1557,10 +1552,8 @@
         h('div', { class: 'note' }, 'Your user key is shown on the Pushover dashboard. The app token comes from an application you create at pushover.net/apps/build (any name, e.g. "Walmart Watcher"). Both are 30 characters.'),
         txt('pushoverUser', 'User key'),
         txt('pushoverToken', 'App token'),
-        num('pushReminders', 'Reminder pushes if you don’t react'),
         h('div', { class: 'note' }, 'Optional: a healthchecks.io ping URL (https://hc-ping.com/…). The watcher pings it about once a minute while watching, and healthchecks.io alerts you if the pings stop.'),
         txt('healthcheckUrl', 'Health check URL'),
-        num('reminderEveryMin', 'Minutes between reminders', 0.5),
         num('heartbeatHour', 'Daily "still running" push at hour (PT, -1 off)'),
         h('h4', { text: 'This computer' }),
         chk('sound', 'Alarm sound'),
@@ -1808,19 +1801,6 @@
       const w = this.record;
       const now = Date.now();
       if (w.status === 'found') {
-        const lastPush = w.lastPushAt || w.foundAt;
-        if (!w.ackAt && (w.remindersSent || 0) < s.pushReminders && now - lastPush >= s.reminderEveryMin * 60000) {
-          const n = (w.remindersSent || 0) + 1;
-          this.save({ remindersSent: n, lastPushAt: now });
-          const d = w.lastDeal || {};
-          push({
-            title: `Reminder ${n}: in stock at ${Core.fmtMoney(d.price)}`,
-            message: `${w.name || 'Your item'} was in stock at ${fmtTime(w.foundAt)}. Tap to open it.`,
-            priority: 4,
-            tags: ['rotating_light'],
-            click: w.url,
-          });
-        }
         if (s.autoResumeMin > 0 && now - w.foundAt >= s.autoResumeMin * 60000) {
           this.stopAlarm();
           if (!w.ackAt) this.markSightingResponse('none');
@@ -2017,8 +1997,8 @@
       stats.deals++;
       this.save(
         Object.assign(
-          { status: 'found', foundAt: now, ackAt: null, lastDeal: ev.best, lastDealKey: key, remindersSent: 0, stats },
-          recentlyAlerted ? { ackAt: now } : { lastAlertAt: now, lastPushAt: now }
+          { status: 'found', foundAt: now, ackAt: null, lastDeal: ev.best, lastDealKey: key, stats },
+          recentlyAlerted ? { ackAt: now } : { lastAlertAt: now }
         )
       );
       if (recentlyAlerted) {
