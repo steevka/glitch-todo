@@ -16,10 +16,10 @@ services:
     environment:
       - TZ=America/New_York
       - DATA_DIR=/data
-      # Prime-only and slow: 3 listings, one request every 20-25 s (each about once a minute).
+      # Prime-only and slow: 4 Prime listings, one request every 15-20 s (each about every 70 s).
       # The all-tiers pace (2 s apart) got the home IP a captcha within 6 minutes.
       - WATCH_TIERS=Prime
-      - SPACING_MS=20000
+      - SPACING_MS=15000
       - JITTER_MS=5000
       - BLOCK_PAUSE_MIN=360
       # Wait this long after a (re)start before the first Amazon request. Set to 0 for later restarts.

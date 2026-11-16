@@ -200,12 +200,14 @@ test('checkout gate', () => {
   assert.equal(Core.checkoutOk(turbo, S).ok, true);
 });
 
-test('Prime: new from Amazon.com at $1,599.99 only', () => {
+test('Prime: new from Amazon.com up to $1,700', () => {
   const s = Core.normalizeSettings({});
   const al = (merchant, condition, price, name = 'ASUS Prime GeForce RTX 5080 16GB GDDR7 Gaming Graphics Card') =>
     Core.evaluateAlert({ name, merchant, condition, price, url: 'https://www.amazon.com/dp/B0DTPG3B1N', mentionsAmazon: true }, s).go;
   assert.equal(al('Amazon.com', 'New', 1599.99), true);
-  assert.equal(al('Amazon.com', 'New', 1699.99, 'ASUS Prime GeForce RTX 5080 16GB GDDR7 OC Edition'), false);
+  assert.equal(al('Amazon.com', 'New', 1699.99, 'ASUS Prime GeForce RTX 5080 16GB GDDR7 OC Edition'), true);
+  assert.equal(al('Amazon.com', 'New', 1699.99, 'ASUS Prime GeForce RTX 5080 EVO 16GB GDDR7 OC Edition'), true);
+  assert.equal(al('Amazon.com', 'New', 1749.99, 'ASUS Prime GeForce RTX 5080 16GB GDDR7 OC Edition'), false);
   assert.equal(al('Amazon Resale', 'Used - Like New', 1388.12), false);
   assert.equal(al('BBlacklow', 'New', 1499.99), false);
 });

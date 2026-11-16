@@ -237,7 +237,7 @@ account, and you accept that risk by arming it.
 - **Models (real RTX 5080s only, air-cooled):**
   - **Flagship:** ASUS ROG Astral, MSI Suprim SOC (air), Gigabyte AORUS Master
   - **TUF:** ASUS TUF (the one you want most, so used is allowed up to the new price)
-  - **Prime:** ASUS Prime (best base card; new from Amazon.com only, for the $1,599.99 drops)
+  - **Prime:** ASUS Prime, Prime OC, Prime EVO (best base card; new from Amazon.com only: the $1,599.99 and $1,699.99 drops)
   - **Sweet spot:** MSI Gaming Trio, Gigabyte Gaming OC, PNY Epic-X, ASUS ProArt
   - Never: other base models (Ventus, Inspire, Windforce, Zotac Solid, PNY plain
     triple-fan), Suprim **Liquid** (AIO), TUF **BTF** (needs a back-connect board),
@@ -252,7 +252,7 @@ account, and you accept that risk by arming it.
   | Flagship | $1,810 | $1,650 |
   | TUF | $1,810 | $1,810 |
   | Sweet spot | $1,810 | $1,600 |
-  | Prime | $1,610 | never |
+  | Prime | $1,700 | never |
 
   Checkout order total must be **≤ $2,000** (tax included).
   Against real alerts from Nov 4–15 2026, this would have fired on the new
@@ -330,8 +330,8 @@ and on Amazon pages the two test commands.
 
 Instead of waiting for the Discord bot, deflab checks Amazon's **All offers** list for
 wanted 5080 listings (`monitor/asins.json`). **Currently Prime-only**
-(`WATCH_TIERS=Prime`: the 3 ASUS Prime listings, one request every 20–25 s, each listing
-about once a minute). Checking all ~20 listings 2 s apart got the home IP a captcha on
+(`WATCH_TIERS=Prime`: the plain Prime B0DTPG3B1N, the two Prime OC listings and the
+EVO, one request every 15–20 s, so each listing about every 70 s). Checking all ~20 listings 2 s apart got the home IP a captcha on
 Amazon within 6 minutes (2026-11-16), so the full list is only safe from another IP. It uses the
 same model/seller/price rules as the userscript (it `require`s it), and pushes a match
 to Chrome on your Mac, which does the buying in your logged-in session. deflab never

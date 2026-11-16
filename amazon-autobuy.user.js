@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Discord → Amazon Auto-Buy (RTX 5080)
 // @namespace    https://github.com/steevka/glitch-todo
-// @version      0.3.1
+// @version      0.3.2
 // @description  Watches a Discord stock-alert channel in the browser tab you have open. When an alert for an Amazon offer you want appears (right merchant, condition and price), it opens the listing and checks out with your saved card and address. One order max until you reset it.
 // @author       steevka
 // @match        https://discord.com/*
@@ -36,7 +36,7 @@
    * (test/autobuy.unit.test.js).
    * ==================================================================== */
   const Core = (() => {
-    const VERSION = '0.3.1';
+    const VERSION = '0.3.2';
     const DISCORD_EPOCH = 1420070400000;
 
     const DEFAULT_SETTINGS = {
@@ -69,10 +69,10 @@
         },
         {
           // Best of the base cards (2.5-slot, vapor chamber, dual BIOS). Amazon.com sells
-          // it new at $1,599.99 most days; the $1,699.99 OC/EVO drops are skipped. New only.
+          // it new at $1,599.99 most days, and the OC / EVO at $1,699.99. New only.
           name: 'Prime',
           pattern: 'asus prime|\\bprime geforce',
-          caps: { New: 1610 },
+          caps: { New: 1700 },
         },
       ],
       // Who we buy from: new only from Amazon itself, used only from Amazon Resale.
