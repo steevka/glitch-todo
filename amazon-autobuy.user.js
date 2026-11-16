@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Discord → Amazon Auto-Buy (RTX 5080)
 // @namespace    https://github.com/steevka/glitch-todo
-// @version      0.2.1
+// @version      0.2.2
 // @description  Watches a Discord stock-alert channel in the browser tab you have open. When an alert for an Amazon offer you want appears (right merchant, condition and price), it opens the listing and checks out with your saved card and address. One order max until you reset it.
 // @author       steevka
 // @match        https://discord.com/*
@@ -30,7 +30,7 @@
    * (test/autobuy.unit.test.js).
    * ==================================================================== */
   const Core = (() => {
-    const VERSION = '0.2.1';
+    const VERSION = '0.2.2';
     const DISCORD_EPOCH = 1420070400000;
 
     const DEFAULT_SETTINGS = {
@@ -399,9 +399,9 @@
   }
 
   function alertAll(title, message, opts = {}) {
-    log('ALERT: ' + title + ' — ' + message);
     push(title, message, opts);
     desktop(title, message);
+    log('ALERT: ' + title + ' — ' + message); // last, so the badge shows the reason
     if (opts.siren !== false) siren(opts.sirenSec || 6);
   }
 
