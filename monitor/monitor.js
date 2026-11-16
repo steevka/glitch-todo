@@ -19,8 +19,13 @@ const PUSHOVER_USER = process.env.PUSHOVER_USER || '';
 const PUSHOVER_TOKEN = process.env.PUSHOVER_TOKEN || '';
 // Only watch listings in these tiers (comma list of tier names; empty = all wanted).
 const WATCH_TIERS = (process.env.WATCH_TIERS || '').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
+// browser = real headless Chromium loading product pages; fetch = raw All Offers requests.
+const MODE = (process.env.MODE || 'fetch').toLowerCase();
+// Listings checked every other time (comma list), e.g. the one that actually drops in price.
+const PRIORITY = (process.env.PRIORITY_ASINS || '').split(',').map((x) => x.trim().toUpperCase()).filter(Boolean);
+const NOT_BEFORE = process.env.NOT_BEFORE ? Date.parse(process.env.NOT_BEFORE) || 0 : 0; // ISO time of the first Amazon request
 const BLOCK_PAUSE_MIN = +process.env.BLOCK_PAUSE_MIN || 360; // after a robot check, stay off Amazon this long
-const START_AT = Date.now() + (+process.env.START_DELAY_MIN || 0) * 60e3;
+const START_AT = Math.max(Date.now() + (+process.env.START_DELAY_MIN || 0) * 60e3, NOT_BEFORE);
 const REPEAT_HIT_MS = 20 * 60 * 1000; // same offer at same price: tell the browser again after 20 min
 const HIT_REPLAY_MS = 90 * 1000; // a browser that (re)connects gets hits from the last 90 s
 const UA =
@@ -114,20 +119,47 @@ function emitHit(hit) {
 
 const newId = () => String(Date.now()) + String(Math.floor(Math.random() * 1000)).padStart(3, '0');
 
+// Raw request for the All Offers list (fast, but Amazon spots it as a script quickly).
+async function loadAod(asin) {
+  const res = await fetch(`https://www.amazon.com/gp/product/ajax/aodAjaxMain/?asin=${asin}&pc=dp&isonlyrenderofferlist=false`, {
+    headers: { 'user-agent': UA, 'accept-language': 'en-US,en;q=0.9', accept: 'text/html,*/*;q=0.8', cookie: cookieHeader() },
+    signal: AbortSignal.timeout(15000),
+  });
+  keepCookies(res);
+  const html = await res.text();
+  if (looksBlocked(res.status, html)) return { status: res.status, blocked: true };
+  if (!res.ok) return { status: res.status, error: 'HTTP ' + res.status };
+  return Object.assign({ status: res.status }, parseAod(html, Core));
+}
+
+// Real headless Chromium loading the product page (MODE=browser).
+let browser = null;
+async function loadPage(asin) {
+  if (!browser) {
+    const { createBrowserChecker } = require('./browser.js');
+    browser = await createBrowserChecker({ dataDir: DATA_DIR, log, Core });
+    log('Chromium started');
+  }
+  try {
+    return await browser.check(asin);
+  } catch (e) {
+    // A wedged browser gets restarted on the next check.
+    const b = browser;
+    browser = null;
+    b.close().catch(() => {});
+    throw e;
+  }
+}
+
 async function check({ asin, name }) {
   const st = (state[asin] = state[asin] || { name, checks: 0 });
   st.name = name;
   const t0 = Date.now();
-  let res, html;
+  let r;
   try {
-    res = await fetch(`https://www.amazon.com/gp/product/ajax/aodAjaxMain/?asin=${asin}&pc=dp&isonlyrenderofferlist=false`, {
-      headers: { 'user-agent': UA, 'accept-language': 'en-US,en;q=0.9', accept: 'text/html,*/*;q=0.8', cookie: cookieHeader() },
-      signal: AbortSignal.timeout(15000),
-    });
-    keepCookies(res);
-    html = await res.text();
+    r = await (MODE === 'browser' ? loadPage(asin) : loadAod(asin));
   } catch (e) {
-    st.error = 'fetch: ' + e.message;
+    st.error = 'load: ' + e.message.split('\n')[0].slice(0, 120);
     st.lastCheck = Date.now();
     return;
   } finally {
@@ -137,26 +169,27 @@ async function check({ asin, name }) {
   st.lastCheck = Date.now();
   st.checks++;
 
-  if (looksBlocked(res.status, html)) {
+  if (r.blocked) {
     blocks.count++;
     blocks.total++;
     const mins = BLOCK_PAUSE_MIN * blocks.count;
     blocks.until = Date.now() + mins * 60e3;
-    st.error = `Amazon robot check (HTTP ${res.status}); pausing ${mins} min`;
+    st.error = `Amazon robot check (HTTP ${r.status}); pausing ${mins} min`;
     log(st.error);
     broadcast('status', { blocked: true, until: blocks.until });
     push('Stock monitor paused', `Amazon showed a robot check. Pausing ${mins} min. Discord alerts still work.`);
     return;
   }
   blocks.count = 0;
-  if (!res.ok) {
-    st.error = 'HTTP ' + res.status;
+  if (r.error) {
+    st.error = r.error;
     return;
   }
 
-  const { title, offers } = parseAod(html, Core);
+  const { title, offers } = r;
   st.title = title || st.title;
   st.offers = offers.length;
+  st.note = r.note || null;
   st.error = null;
   const tier = Core.classify(settings, st.title || name);
   st.tier = tier ? tier.name : null;
@@ -196,6 +229,14 @@ async function check({ asin, name }) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Priority listings go between every other listing: P a P b P c ...
+function schedule(list) {
+  const pri = list.filter((w) => PRIORITY.includes(w.asin));
+  const rest = list.filter((w) => !PRIORITY.includes(w.asin));
+  if (!pri.length || !rest.length) return list;
+  return rest.flatMap((w) => [...pri, w]);
+}
+
 async function loop() {
   for (;;) {
     const waitUntil = Math.max(blocks.until, START_AT);
@@ -203,7 +244,7 @@ async function loop() {
       await sleep(Math.min(waitUntil - Date.now(), 30e3));
       continue;
     }
-    const list = watchList();
+    const list = schedule(watchList());
     if (!list.length) {
       await sleep(5000);
       continue;
@@ -269,6 +310,8 @@ function status() {
     requests,
     spacingMs: SPACING_MS,
     watchTiers: WATCH_TIERS,
+    mode: MODE,
+    priority: PRIORITY,
     startsAt: START_AT > Date.now() ? START_AT : null,
     lastRound,
     browsers: clients.size,
@@ -328,7 +371,7 @@ const server = http.createServer(async (req, res) => {
 
 if (require.main === module) {
   server.listen(PORT, () =>
-    log(`Stock monitor ${Core.VERSION} on :${PORT}, watching ${watchList().length} listings (${WATCH_TIERS.join(',') || 'all tiers'}), ${SPACING_MS} ms apart${START_AT > Date.now() ? ', starting ' + new Date(START_AT).toISOString() : ''}`)
+    log(`Stock monitor ${Core.VERSION} on :${PORT}, ${MODE} mode, watching ${watchList().length} listings (${WATCH_TIERS.join(',') || 'all tiers'}), ${SPACING_MS} ms apart${START_AT > Date.now() ? ', starting ' + new Date(START_AT).toISOString() : ''}`)
   );
   loop();
 }

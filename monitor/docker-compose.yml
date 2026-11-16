@@ -4,31 +4,35 @@
 #   PUSHOVER_USER=...   PUSHOVER_TOKEN=...
 services:
   gpu-monitor:
-    image: node:22-alpine
+    build: /mnt/user/appdata/gpu-monitor/app/monitor
+    image: deflab/gpu-monitor:latest
     container_name: gpu-monitor
     init: true
     restart: unless-stopped
     user: "99:100"
-    working_dir: /app
-    command: ["node", "monitor/monitor.js"]
     ports:
       - "8787:8787" # LAN + Tailscale: http://deflab:8787
     environment:
       - TZ=America/New_York
       - DATA_DIR=/data
-      # Prime-only and slow: 4 Prime listings, one request every 15-20 s (each about every 70 s).
-      # The all-tiers pace (2 s apart) got the home IP a captcha within 6 minutes.
+      # Raw requests (MODE=fetch) got the home IP a captcha twice on 2026-11-16, even at
+      # 3-4 a minute. Now a real headless Chromium loads the product pages like a person.
+      - MODE=browser
+      # Prime-only: the plain Prime (the $1,599.99 drops) every other check, the OC/EVO
+      # listings in between; one page every 30-45 s.
       - WATCH_TIERS=Prime
-      - SPACING_MS=15000
-      - JITTER_MS=5000
+      - PRIORITY_ASINS=B0DTPG3B1N
+      - SPACING_MS=30000
+      - JITTER_MS=15000
       - BLOCK_PAUSE_MIN=360
-      # Wait this long after a (re)start before the first Amazon request. Set to 0 for later restarts.
-      - START_DELAY_MIN=${START_DELAY_MIN:-0}
+      # No Amazon requests before this time (lets a flagged IP cool off). Empty = start now.
+      - NOT_BEFORE=${NOT_BEFORE:-}
     env_file: /mnt/user/appdata/gpu-monitor/monitor.env
     volumes:
       - /mnt/user/appdata/gpu-monitor/app:/app:ro
       - /mnt/user/appdata/gpu-monitor/data:/data
-    mem_limit: 256m
+    shm_size: "512mb" # Chromium needs more than Docker's 64 MB default
+    mem_limit: 1g
     logging:
       options:
         max-size: "5m"

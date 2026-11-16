@@ -293,6 +293,18 @@
       return ok[0] || null;
     }
 
+    // Who sells the buy-box offer, and in what condition (from the buy box's visible text).
+    function parseBuyBox(sellerText, boxText) {
+      sellerText = String(sellerText || '');
+      boxText = String(boxText || '');
+      let merchant = null;
+      if (/amazon resale/i.test(sellerText)) merchant = 'Amazon Resale';
+      else if (/Seller\s+Amazon(\.com)?\b(?!\s+(Germany|Japan|UK|Canada|Mexico|Export))/i.test(sellerText) || /sold by amazon\.com/i.test(sellerText)) merchant = 'Amazon.com';
+      else merchant = sellerText.trim().split('\n').pop().trim() || null;
+      const condition = /used\s*-\s*/i.test(boxText.slice(0, 600)) ? parseCondition(boxText) : 'New';
+      return { merchant, condition };
+    }
+
     // Read the money amounts from a checkout page's visible text.
     function checkoutTotals(text) {
       const t = String(text || '').replace(/ /g, ' ');
@@ -332,6 +344,7 @@
       parseMessageElementId,
       isAmazonUrl,
       asinFromUrl,
+      parseBuyBox,
       parseAlert,
       nameOk,
       classify,
@@ -831,13 +844,7 @@
       priceIn(document.querySelector('#corePriceDisplay_desktop_feature_div')) ??
       priceIn(document.querySelector('#apex_desktop'));
     const sellerText = txt('#merchantInfoFeature_feature_div') || txt('#merchant-info') || txt('#sellerProfileTriggerId');
-    let merchant = null;
-    if (/amazon resale/i.test(sellerText)) merchant = 'Amazon Resale';
-    else if (/Seller\s+Amazon(\.com)?\b(?!\s+(Germany|Japan|UK|Canada|Mexico|Export))/i.test(sellerText) || /sold by amazon\.com/i.test(sellerText)) merchant = 'Amazon.com';
-    else merchant = sellerText.split('\n').pop() || null;
-    const boxText = txt('#buybox');
-    const condition = /used\s*-\s*/i.test(boxText.slice(0, 600)) ? Core.parseCondition(boxText) : 'New';
-    return { price, merchant, condition };
+    return Object.assign({ price }, Core.parseBuyBox(sellerText, txt('#buybox')));
   }
 
   async function fetchOffers(asin) {

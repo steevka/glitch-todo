@@ -352,6 +352,12 @@ logs into Amazon.
 - **Phone push from deflab** (optional, also warns if no browser is connected): put
   `PUSHOVER_USER=` and `PUSHOVER_TOKEN=` in `/mnt/user/appdata/gpu-monitor/monitor.env`
   on the Unraid host, then restart the `gpu-monitor` container.
+- **Browser mode (`MODE=browser`, the default in the compose file):** raw requests got the
+  home IP flagged twice on 2026-11-16, even at 3–4 a minute, because Node's HTTP client and
+  bare API calls don't look like a browser. The container (`monitor/Dockerfile`, official
+  Playwright image) instead loads the product pages in real headless Chromium with a
+  persistent profile, reads the buy box with the same code as the userscript, and checks the
+  plain Prime every other time. `NOT_BEFORE=<ISO time>` delays the first Amazon request.
 - **Deploy/update:** `monitor/deploy.sh` from agent-lab (copies the code to
   `/mnt/user/appdata/gpu-monitor/app`, Compose Manager project `gpu-monitor`).
   Logs: `docker logs gpu-monitor`.
