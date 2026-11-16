@@ -1,0 +1,280 @@
+'use strict';
+// deflab stock monitor: checks the All Offers list of every wanted RTX 5080 listing,
+// and streams matches to the userscript (open http://deflab:8787 in Chrome on the Mac),
+// which does the actual buying in your logged-in browser. Node 22, no dependencies.
+
+const http = require('http');
+const fs = require('fs');
+const path = require('path');
+
+const CORE_PATH = process.env.CORE_PATH || path.join(__dirname, '..', 'amazon-autobuy.user.js');
+const Core = require(CORE_PATH);
+const { parseAod, looksBlocked } = require('./aod.js');
+
+const PORT = +process.env.PORT || 8787;
+const SPACING_MS = +process.env.SPACING_MS || 2000; // between requests to Amazon
+const JITTER_MS = +process.env.JITTER_MS || 1000;
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
+const PUSHOVER_USER = process.env.PUSHOVER_USER || '';
+const PUSHOVER_TOKEN = process.env.PUSHOVER_TOKEN || '';
+const REPEAT_HIT_MS = 20 * 60 * 1000; // same offer at same price: tell the browser again after 20 min
+const HIT_REPLAY_MS = 90 * 1000; // a browser that (re)connects gets hits from the last 90 s
+const UA =
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
+
+const settings = Core.normalizeSettings(readJson(path.join(DATA_DIR, 'settings.json'), {}));
+const seed = readJson(path.join(__dirname, 'asins.json'), { asins: {} }).asins;
+const learnedFile = path.join(DATA_DIR, 'learned.json');
+const learned = readJson(learnedFile, {});
+
+const state = {}; // asin -> { name, title, tier, checks, lastCheck, ms, offers, best, wanted, error }
+const hits = []; // most recent last
+const lastHitKey = new Map(); // asin -> { key, at }
+const clients = new Set();
+const blocks = { until: 0, count: 0, total: 0 };
+const started = Date.now();
+let requests = 0;
+let cursor = 0;
+let lastRound = null;
+let roundStart = Date.now();
+
+function readJson(file, dflt) {
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch (e) {
+    return dflt;
+  }
+}
+
+function log(...a) {
+  console.log(new Date().toISOString(), ...a);
+}
+
+function watchList() {
+  const all = Object.assign({}, seed, learned);
+  return Object.keys(all)
+    .filter((a) => /^[A-Z0-9]{10}$/.test(a))
+    .map((asin) => ({ asin, name: all[asin] }));
+}
+
+function push(title, message, extra = {}) {
+  if (!PUSHOVER_USER || !PUSHOVER_TOKEN) return;
+  const body = new URLSearchParams(Object.assign({ token: PUSHOVER_TOKEN, user: PUSHOVER_USER, title, message }, extra));
+  fetch('https://api.pushover.net/1/messages.json', { method: 'POST', body }).catch((e) => log('push failed', e.message));
+}
+
+function broadcast(event, data) {
+  const msg = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  for (const res of clients) res.write(msg);
+}
+
+function emitHit(hit) {
+  hits.push(hit);
+  while (hits.length > 50) hits.shift();
+  log(`HIT ${hit.test ? '(test) ' : ''}${hit.asin} ${hit.merchant} ${hit.condition} ${Core.fmtMoney(hit.price)} -> ${clients.size} browser(s)`);
+  broadcast('hit', hit);
+}
+
+const newId = () => String(Date.now()) + String(Math.floor(Math.random() * 1000)).padStart(3, '0');
+
+async function check({ asin, name }) {
+  const st = (state[asin] = state[asin] || { name, checks: 0 });
+  st.name = name;
+  const t0 = Date.now();
+  let res, html;
+  try {
+    res = await fetch(`https://www.amazon.com/gp/product/ajax/aodAjaxMain/?asin=${asin}&pc=dp&isonlyrenderofferlist=false`, {
+      headers: { 'user-agent': UA, 'accept-language': 'en-US,en;q=0.9', accept: 'text/html,*/*;q=0.8' },
+      signal: AbortSignal.timeout(15000),
+    });
+    html = await res.text();
+  } catch (e) {
+    st.error = 'fetch: ' + e.message;
+    st.lastCheck = Date.now();
+    return;
+  } finally {
+    requests++;
+  }
+  st.ms = Date.now() - t0;
+  st.lastCheck = Date.now();
+  st.checks++;
+
+  if (looksBlocked(res.status, html)) {
+    blocks.count++;
+    blocks.total++;
+    const mins = Math.min(15 * 2 ** (blocks.count - 1), 120);
+    blocks.until = Date.now() + mins * 60e3;
+    st.error = `Amazon robot check (HTTP ${res.status}); pausing ${mins} min`;
+    log(st.error);
+    broadcast('status', { blocked: true, until: blocks.until });
+    push('Stock monitor paused', `Amazon showed a robot check. Pausing ${mins} min. Discord alerts still work.`);
+    return;
+  }
+  blocks.count = 0;
+  if (!res.ok) {
+    st.error = 'HTTP ' + res.status;
+    return;
+  }
+
+  const { title, offers } = parseAod(html, Core);
+  st.title = title || st.title;
+  st.offers = offers.length;
+  st.error = null;
+  const tier = Core.classify(settings, st.title || name);
+  st.tier = tier ? tier.name : null;
+  st.wanted = !!tier;
+  const ours = offers
+    .map((o) => Object.assign({}, o, { merchant: Core.canonicalMerchant(o.seller) }))
+    .filter((o) => settings.allowed.some((r) => r.merchant.toLowerCase() === o.merchant.toLowerCase()));
+  ours.sort((a, b) => a.price - b.price);
+  st.best = ours[0] ? { merchant: ours[0].merchant, condition: ours[0].condition, price: ours[0].price } : null;
+  if (!tier) return;
+
+  const pick = Core.pickOffer(offers, settings, tier);
+  if (!pick) return;
+  const key = `${pick.merchant}|${pick.condition}|${pick.price}`;
+  const prev = lastHitKey.get(asin);
+  if (prev && prev.key === key && Date.now() - prev.at < REPEAT_HIT_MS) return;
+  lastHitKey.set(asin, { key, at: Date.now() });
+  const hit = {
+    id: newId(),
+    at: Date.now(),
+    asin,
+    url: `https://www.amazon.com/dp/${asin}`,
+    name: st.title || name,
+    tier: tier.name,
+    merchant: pick.merchant,
+    condition: pick.condition,
+    price: pick.price,
+    cap: pick.cap,
+  };
+  emitHit(hit);
+  push(
+    `In stock: ${tier.name} 5080 ${Core.fmtMoney(pick.price)}`,
+    `${pick.merchant} / ${pick.condition}: ${(st.title || name).slice(0, 90)}\n${clients.size ? 'Your Mac is on it.' : 'No browser connected! Buy it by hand.'}`,
+    { url: hit.url, priority: clients.size ? '0' : '1' }
+  );
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function loop() {
+  for (;;) {
+    if (Date.now() < blocks.until) {
+      await sleep(Math.min(blocks.until - Date.now(), 30e3));
+      continue;
+    }
+    const list = watchList();
+    if (!list.length) {
+      await sleep(5000);
+      continue;
+    }
+    if (cursor >= list.length) {
+      cursor = 0;
+      lastRound = { ms: Date.now() - roundStart, n: list.length };
+      roundStart = Date.now();
+    }
+    const item = list[cursor++];
+    // Pages that turned out not to be a wanted model are re-checked only every 30th round.
+    const st = state[item.asin];
+    if (st && st.wanted === false && st.checks % 30 !== 0) {
+      st.checks++;
+      continue;
+    }
+    try {
+      await check(item);
+    } catch (e) {
+      log('check error', item.asin, e.message);
+    }
+    await sleep(SPACING_MS + Math.random() * JITTER_MS);
+  }
+}
+
+// ---------- HTTP ----------
+function readBody(req) {
+  return new Promise((resolve) => {
+    let b = '';
+    req.on('data', (c) => (b += c.length + b.length < 1e5 ? c : ''));
+    req.on('end', () => {
+      try {
+        resolve(JSON.parse(b || '{}'));
+      } catch (e) {
+        resolve({});
+      }
+    });
+  });
+}
+
+function json(res, code, obj) {
+  res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+  res.end(JSON.stringify(obj));
+}
+
+function status() {
+  return {
+    version: Core.VERSION,
+    started,
+    now: Date.now(),
+    requests,
+    spacingMs: SPACING_MS,
+    lastRound,
+    browsers: clients.size,
+    blockedUntil: blocks.until > Date.now() ? blocks.until : null,
+    blocksTotal: blocks.total,
+    pushover: !!(PUSHOVER_USER && PUSHOVER_TOKEN),
+    hits: hits.slice(-10).reverse(),
+    watch: watchList().map(({ asin, name }) => Object.assign({ asin, name, learned: !!learned[asin] && !seed[asin] }, state[asin] || {})),
+  };
+}
+
+const server = http.createServer(async (req, res) => {
+  const u = new URL(req.url, 'http://x');
+  if (req.method === 'GET' && u.pathname === '/') {
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+    return res.end(fs.readFileSync(path.join(__dirname, 'page.html')));
+  }
+  if (req.method === 'GET' && u.pathname === '/status.json') return json(res, 200, status());
+  if (req.method === 'GET' && u.pathname === '/events') {
+    res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' });
+    res.write('retry: 2000\n\n');
+    clients.add(res);
+    for (const h of hits) if (Date.now() - h.at < HIT_REPLAY_MS) res.write(`event: hit\ndata: ${JSON.stringify(h)}\n\n`);
+    const ping = setInterval(() => res.write(`event: ping\ndata: ${Date.now()}\n\n`), 15000);
+    req.on('close', () => {
+      clearInterval(ping);
+      clients.delete(res);
+    });
+    return;
+  }
+  if (req.method === 'POST' && u.pathname === '/learn') {
+    const b = await readBody(req);
+    const asin = String(b.asin || '').toUpperCase();
+    if (!/^[A-Z0-9]{10}$/.test(asin)) return json(res, 400, { ok: false });
+    const isNew = !seed[asin] && !learned[asin];
+    if (isNew && Core.classify(settings, String(b.name || ''))) {
+      learned[asin] = String(b.name).slice(0, 120);
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+      fs.writeFileSync(learnedFile, JSON.stringify(learned, null, 1));
+      log('Learned', asin, learned[asin]);
+    }
+    return json(res, 200, { ok: true, learned: !!learned[asin], known: !!seed[asin] });
+  }
+  if (req.method === 'POST' && u.pathname === '/test-hit') {
+    const b = await readBody(req);
+    const asin = String(b.asin || '').toUpperCase();
+    const cap = Core.parseMoney(b.maxPrice);
+    if (!/^[A-Z0-9]{10}$/.test(asin) || !cap) return json(res, 400, { ok: false, why: 'need asin and maxPrice' });
+    const hit = { id: newId(), at: Date.now(), test: true, testCap: cap, asin, url: `https://www.amazon.com/dp/${asin}`, name: 'Test from the monitor page', price: null };
+    emitHit(hit);
+    return json(res, 200, { ok: true, browsers: clients.size });
+  }
+  res.writeHead(404);
+  res.end();
+});
+
+if (require.main === module) {
+  server.listen(PORT, () => log(`Stock monitor ${Core.VERSION} on :${PORT}, watching ${watchList().length} listings, ${SPACING_MS} ms apart`));
+  loop();
+}
+
+module.exports = { server, check, state, hits, clients, watchList };

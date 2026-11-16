@@ -88,7 +88,7 @@ test('model tiers', () => {
   assert.equal(tier('ASUS ROG Astral GeForce RTX 5080 16GB GDDR7 White OC Edition'), 'Flagship');
   assert.equal(tier('msi Gaming RTX 5080 16G SUPRIM SOC Graphics Card'), 'Flagship');
   assert.equal(tier('GIGABYTE AORUS GeForce RTX 5080 Master ICE 16G Graphics Card'), 'Flagship');
-  assert.equal(tier('ASUS TUF Gaming GeForce RTX 5080 16GB GDDR7 OC Edition'), 'Sweet spot');
+  assert.equal(tier('ASUS TUF Gaming GeForce RTX 5080 16GB GDDR7 OC Edition'), 'TUF');
   assert.equal(tier('msi Gaming RTX 5080 16G Gaming Trio OC White'), 'Sweet spot');
   assert.equal(tier('GIGABYTE GeForce RTX 5080 Gaming OC 16G Graphics Card, WINDFORCE Cooling System'), 'Sweet spot');
   assert.equal(tier('PNY NVIDIA GeForce RTX 5080 Epic-X RGB OC Triple-Fan'), 'Sweet spot');
@@ -108,7 +108,7 @@ test('model tiers', () => {
   assert.equal(tier('ASUS ROG Astral GeForce RTX 5070 Ti'), null);
 });
 
-test('real alerts Nov 4-15: only the new Suprim SOC and Epic-X fire', () => {
+test('real alerts Nov 4-15: new Suprim SOC, Epic-X and the Resale TUF fire', () => {
   const alerts = require('./fixtures-alerts');
   for (const a of alerts) {
     const links = a.links || (/Product Link/.test(a.text) ? [LINK] : []);
@@ -200,7 +200,13 @@ test('checkout gate', () => {
 });
 
 test('settings normalise', () => {
-  const s = Core.normalizeSettings({ maxPrice: '1650', armed: 'yes', allowed: [{ merchant: 'Amazon.com' }] });
+  // An old saved copy of the rules is ignored unless customRules is on.
+  const old = Core.normalizeSettings({ maxPrice: 1000, tiers: [], armed: true, pushoverUser: 'u' });
+  assert.equal(old.maxPrice, Core.DEFAULT_SETTINGS.maxPrice);
+  assert.equal(old.tiers.length, Core.DEFAULT_SETTINGS.tiers.length);
+  assert.equal(old.armed, true);
+  assert.equal(old.pushoverUser, 'u');
+  const s = Core.normalizeSettings({ customRules: true, maxPrice: '1650', armed: 'yes', allowed: [{ merchant: 'Amazon.com' }] });
   assert.equal(s.maxPrice, 1650);
   assert.equal(Core.capFor(s, s.tiers[0], 'New'), 1650); // global ceiling wins
   assert.equal(s.armed, false); // only literal true arms it

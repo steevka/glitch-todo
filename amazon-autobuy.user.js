@@ -1,12 +1,15 @@
 // ==UserScript==
 // @name         Discord → Amazon Auto-Buy (RTX 5080)
 // @namespace    https://github.com/steevka/glitch-todo
-// @version      0.2.3
+// @version      0.3.0
 // @description  Watches a Discord stock-alert channel in the browser tab you have open. When an alert for an Amazon offer you want appears (right merchant, condition and price), it opens the listing and checks out with your saved card and address. One order max until you reset it.
 // @author       steevka
 // @match        https://discord.com/*
 // @match        https://www.amazon.com/*
 // @match        https://amzn.to/*
+// @match        http://deflab:8787/*
+// @match        http://100.100.190.39:8787/*
+// @match        http://192.168.68.73:8787/*
 // @run-at       document-end
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -17,6 +20,9 @@
 // @grant        GM_registerMenuCommand
 // @connect      api.pushover.net
 // @connect      hc-ping.com
+// @connect      deflab
+// @connect      100.100.190.39
+// @connect      192.168.68.73
 // @updateURL    https://raw.githubusercontent.com/steevka/glitch-todo/glitch/amazon-autobuy.user.js
 // @downloadURL  https://raw.githubusercontent.com/steevka/glitch-todo/glitch/amazon-autobuy.user.js
 // @supportURL   https://github.com/steevka/glitch-todo
@@ -30,7 +36,7 @@
    * (test/autobuy.unit.test.js).
    * ==================================================================== */
   const Core = (() => {
-    const VERSION = '0.2.3';
+    const VERSION = '0.3.0';
     const DISCORD_EPOCH = 1420070400000;
 
     const DEFAULT_SETTINGS = {
@@ -51,8 +57,14 @@
           caps: { New: 1810, 'Used - Like New': 1650, 'Used - Very Good': 1650 },
         },
         {
+          // The one you really want: used from Amazon Resale up to the same as new.
+          name: 'TUF',
+          pattern: '\\btuf\\b',
+          caps: { New: 1810, 'Used - Like New': 1810, 'Used - Very Good': 1810 },
+        },
+        {
           name: 'Sweet spot',
-          pattern: '\\btuf\\b|gaming trio|gigabyte.*\\bgaming oc\\b|epic-x|proart',
+          pattern: 'gaming trio|gigabyte.*\\bgaming oc\\b|epic-x|proart',
           caps: { New: 1810, 'Used - Like New': 1600, 'Used - Very Good': 1600 },
         },
       ],
@@ -68,6 +80,8 @@
       // Behaviour
       armed: false, // false = dry run: goes to checkout, stops before Place your order
       requestInvites: true, // click "Request invitation" on invite-only listings
+      customRules: false, // true = use the tiers/caps saved in Settings instead of the built-in ones
+      monitorUrl: 'http://deflab:8787', // the deflab stock monitor (over Tailscale)
       // Alerts
       pushoverUser: '',
       pushoverToken: '',
@@ -75,8 +89,14 @@
       sound: true,
     };
 
+    // What to buy is maintained in this file. Saved settings only override it when
+    // they say customRules: true (otherwise an old saved copy would pin old rules).
+    const RULE_KEYS = ['tiers', 'allowed', 'requirePattern', 'excludePattern', 'minPrice', 'maxPrice', 'maxOrderTotal'];
+
     function normalizeSettings(raw) {
-      const s = Object.assign({}, DEFAULT_SETTINGS, raw || {});
+      raw = Object.assign({}, raw || {});
+      if (raw.customRules !== true) RULE_KEYS.forEach((k) => delete raw[k]);
+      const s = Object.assign({}, DEFAULT_SETTINGS, raw);
       const num = (v, d) => (Number.isFinite(+v) && +v > 0 ? +v : d);
       s.minPrice = num(s.minPrice, DEFAULT_SETTINGS.minPrice);
       s.maxPrice = num(s.maxPrice, DEFAULT_SETTINGS.maxPrice);
@@ -438,6 +458,87 @@
   /* ======================================================================
    * Discord: watch the alert channel
    * ==================================================================== */
+  // Start a buy attempt in a new Amazon tab (from a Discord alert or a monitor match).
+  function startBuy(alert, ev, id, s, extra = {}) {
+    if (!extra.test && GM_getValue('orderLock', null)) {
+      alertAll('Wanted 5080 alert (locked)', `Order lock is on, so I did not buy: ${ev.why}`, { url: alert.url, priority: 1 });
+      return;
+    }
+    const cur = liveJob();
+    if (cur && cur.stage !== 'failed' && Date.now() - cur.created < 60 * 1000) {
+      log('Already working on a buy; ignoring ' + ev.why);
+      return;
+    }
+    const job = Object.assign({ id: String(id), created: Date.now(), alert, stage: 'opening', armed: extra.test ? false : s.armed }, extra);
+    setJob(job);
+    log('GO: ' + ev.why + ' — opening Amazon');
+    const url = alert.url.split('#')[0] + '#' + HASH_KEY + '=' + job.id;
+    GM_openInTab(url, { active: true, insert: true, setParent: true });
+    desktop('Buying: ' + ev.why, alert.name || '');
+  }
+
+  // ---------- deflab stock monitor page (http://deflab:8787) ----------
+  function isMonitorPage() {
+    return !!document.querySelector('meta[name="gtd-monitor"]');
+  }
+
+  function runMonitorPage() {
+    const seen = new Set(GM_getValue('seenHits', []));
+    let connected = false;
+    const es = new EventSource('/events');
+    es.addEventListener('open', () => {
+      connected = true;
+      badge('Connected to the deflab monitor. Keep this tab open.');
+      log('Monitor connected');
+    });
+    es.addEventListener('error', () => {
+      if (connected) log('Monitor connection lost; retrying');
+      connected = false;
+      badge('Lost the deflab monitor, retrying… (is Tailscale on?)');
+    });
+    es.addEventListener('hit', (e) => {
+      let h;
+      try {
+        h = JSON.parse(e.data);
+      } catch (err) {
+        return;
+      }
+      if (!h || !h.id || !h.asin || seen.has(h.id)) return;
+      seen.add(h.id);
+      GM_setValue('seenHits', Array.from(seen).slice(-100));
+      if (Date.now() - h.at > 120 * 1000) return log('Old monitor match ignored: ' + h.asin);
+      const s = settings();
+      const url = 'https://www.amazon.com/dp/' + h.asin;
+      if (h.test) {
+        log('Monitor test match: ' + h.asin);
+        return startBuy({ name: h.name, url, asin: h.asin, price: null }, { why: 'monitor test (dry run)' }, h.id, s, { test: true, testCap: h.testCap });
+      }
+      const alert = { name: h.name, merchant: h.merchant, condition: h.condition, price: h.price, url, asin: h.asin, mentionsAmazon: true, source: 'monitor' };
+      const ev = Core.evaluateAlert(alert, s);
+      if (!ev.go) return log('Monitor match skipped: ' + ev.why + ' — ' + (h.name || '').slice(0, 60));
+      startBuy(alert, ev, h.id, s);
+    });
+  }
+
+  // Tell the monitor about wanted listings Discord mentions, so it watches them too.
+  const taught = new Set();
+  function teachMonitor(alert, s) {
+    if (!s.monitorUrl || !alert.asin || taught.has(alert.asin) || !Core.classify(s, alert.name || '')) return;
+    taught.add(alert.asin);
+    GM_xmlhttpRequest({
+      method: 'POST',
+      url: s.monitorUrl.replace(/\/+$/, '') + '/learn',
+      headers: { 'content-type': 'application/json' },
+      data: JSON.stringify({ asin: alert.asin, name: alert.name }),
+      onload: (r) => {
+        try {
+          if (JSON.parse(r.responseText).learned) log('Monitor now watches ' + alert.asin);
+        } catch (e) {}
+      },
+      onerror: () => {},
+    });
+  }
+
   function runDiscord() {
     const seen = new Set();
     let primed = false;
@@ -470,32 +571,13 @@
     function handleMessage(li, ids, s) {
       const links = Array.from(li.querySelectorAll('a[href]')).map((a) => a.href);
       const alert = Core.parseAlert(li.innerText || '', links);
+      teachMonitor(alert, s);
       const ev = Core.evaluateAlert(alert, s);
       if (!ev.go) {
         if (alert.mentionsAmazon) log('Skipped alert: ' + ev.why + ' — ' + (alert.name || '').slice(0, 60));
         return;
       }
-      if (GM_getValue('orderLock', null)) {
-        alertAll('Wanted 5080 alert (locked)', `Order lock is on, so I did not buy: ${ev.why}`, { url: alert.url, priority: 1 });
-        return;
-      }
-      const cur = liveJob();
-      if (cur && cur.stage !== 'failed' && Date.now() - cur.created < 60 * 1000) {
-        log('Already working on a buy; ignoring ' + ev.why);
-        return;
-      }
-      const job = {
-        id: ids.messageId,
-        created: Date.now(),
-        alert,
-        stage: 'opening',
-        armed: s.armed,
-      };
-      setJob(job);
-      log('GO: ' + ev.why + ' — opening Amazon');
-      const url = alert.url.split('#')[0] + '#' + HASH_KEY + '=' + job.id;
-      GM_openInTab(url, { active: true, insert: true, setParent: true });
-      desktop('Buying: ' + ev.why, alert.name || '');
+      startBuy(alert, ev, ids.messageId, s);
     }
 
     function tick() {
@@ -902,7 +984,9 @@
   if (isTop) menus();
   if (location.hostname === 'discord.com') {
     if (isTop) runDiscord();
-  } else {
+  } else if (isMonitorPage()) {
+    if (isTop) runMonitorPage();
+  } else if (/amazon\.com$|^amzn\.to$/i.test(location.hostname)) {
     runAmazon().catch((e) => log('Error: ' + e.message));
   }
 })();

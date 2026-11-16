@@ -1,0 +1,25 @@
+{
+  "_note": "Wanted RTX 5080 listings to watch. The monitor also re-checks each page's title against the userscript's model rules, and learns new ASINs from Discord alerts (kept in /data/learned.json).",
+  "asins": {
+    "B0DQSD7YQC": "ASUS ROG Astral OC",
+    "B0DTN9C7CZ": "ASUS ROG Astral",
+    "B0FKX6LPR6": "ASUS ROG Astral White OC",
+    "B0DS643QRW": "ASUS ROG Astral",
+    "B0DTV6S21P": "ASUS ROG Astral",
+    "B0DSXJ5QF4": "MSI Suprim SOC (air)",
+    "B0DT7H5JYL": "Gigabyte AORUS Master ICE",
+    "B0DQSMMCSH": "ASUS TUF OC",
+    "B0DS65KD1C": "ASUS TUF OC",
+    "B0DTY4H1CB": "ASUS TUF",
+    "B0DTNG5XCT": "ASUS TUF",
+    "B0DTHVLLY2": "ASUS TUF",
+    "B0BX6LGM2X": "MSI Gaming Trio",
+    "B0DSXGNFJL": "MSI Gaming Trio White",
+    "B0DS2R6948": "Gigabyte Gaming OC",
+    "B0DSQ1RCZV": "Gigabyte Gaming OC",
+    "B0HRHTNLP3": "Gigabyte Gaming OC",
+    "B0DTJDR3V9": "PNY Epic-X",
+    "B0G26XL6TW": "PNY Epic-X",
+    "B09CL8ZFJ5": "ASUS ProArt"
+  }
+}

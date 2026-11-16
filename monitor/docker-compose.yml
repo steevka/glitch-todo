@@ -1,0 +1,28 @@
+# 5080 stock monitor on deflab (Unraid Compose Manager project "gpu-monitor").
+# Code: /mnt/user/appdata/gpu-monitor/app (copied by monitor/deploy.sh), state: .../data.
+# Optional Pushover keys go in /mnt/user/appdata/gpu-monitor/monitor.env:
+#   PUSHOVER_USER=...   PUSHOVER_TOKEN=...
+services:
+  gpu-monitor:
+    image: node:22-alpine
+    container_name: gpu-monitor
+    init: true
+    restart: unless-stopped
+    user: "99:100"
+    working_dir: /app
+    command: ["node", "monitor/monitor.js"]
+    ports:
+      - "8787:8787" # LAN + Tailscale: http://deflab:8787
+    environment:
+      - TZ=America/New_York
+      - DATA_DIR=/data
+      - SPACING_MS=2000
+    env_file: /mnt/user/appdata/gpu-monitor/monitor.env
+    volumes:
+      - /mnt/user/appdata/gpu-monitor/app:/app:ro
+      - /mnt/user/appdata/gpu-monitor/data:/data
+    mem_limit: 256m
+    logging:
+      options:
+        max-size: "5m"
+        max-file: "2"

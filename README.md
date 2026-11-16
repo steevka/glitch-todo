@@ -236,7 +236,8 @@ account, and you accept that risk by arming it.
 
 - **Models (real RTX 5080s only, air-cooled):**
   - **Flagship:** ASUS ROG Astral, MSI Suprim SOC (air), Gigabyte AORUS Master
-  - **Sweet spot:** ASUS TUF, MSI Gaming Trio, Gigabyte Gaming OC, PNY Epic-X, ASUS ProArt
+  - **TUF:** ASUS TUF (the one you want most, so used is allowed up to the new price)
+  - **Sweet spot:** MSI Gaming Trio, Gigabyte Gaming OC, PNY Epic-X, ASUS ProArt
   - Never: base models (Prime, Ventus, Inspire, Windforce, Zotac Solid, PNY plain
     triple-fan), Suprim **Liquid** (AIO), TUF **BTF** (needs a back-connect board),
     water-block cards, Ti, laptops/prebuilts, accessories.
@@ -248,12 +249,15 @@ account, and you accept that risk by arming it.
   | | New (Amazon.com) | Resale (Like New / Very Good) |
   |---|---|---|
   | Flagship | $1,810 | $1,650 |
+  | TUF | $1,810 | $1,810 |
   | Sweet spot | $1,810 | $1,600 |
 
   Checkout order total must be **≤ $2,000** (tax included).
   Against real alerts from Nov 4–15 2026, this would have fired on the new
-  Suprim SOC ($1,799.99, twice) and the new PNY Epic-X ($1,799.99), and skipped
-  the $1,805 Resale listings.
+  Suprim SOC ($1,799.99, twice), the new PNY Epic-X ($1,799.99) and the Resale
+  TUF ($1,804.99), and skipped the other $1,805 Resale listings.
+- These rules live in the script, so updates reach you. Rules you save in
+  Settings only apply if you also set `"customRules": true`.
 - **One order, ever,** until you clear the lock from the menu.
 - It starts in **dry run**: it goes all the way to checkout, highlights
   Place your order, rings the siren and pushes to your phone, but doesn't click.
@@ -319,3 +323,30 @@ and on Amazon pages the two test commands.
   checkout page was only tested against a mock. That's why it starts in dry run.
 - Discord only renders new messages while the channel is scrolled to the bottom.
 - Tests: `npm test` (pure logic, using the real alert text and offer markup).
+
+## deflab Stock Monitor (your own alerts)
+
+Instead of waiting for the Discord bot, deflab checks Amazon's **All offers** list for
+every wanted 5080 listing (`monitor/asins.json`, about 20) in a slow rotation:
+one request every 2–3 s, so each listing is checked about once a minute. It uses the
+same model/seller/price rules as the userscript (it `require`s it), and pushes a match
+to Chrome on your Mac, which does the buying in your logged-in session. deflab never
+logs into Amazon.
+
+- **Status page:** http://deflab:8787 (over Tailscale; http://192.168.68.73:8787 on the LAN).
+  Keep it open in a Chrome tab on the Mac: the userscript runs there, gets matches
+  instantly over a live connection, and opens the Amazon tab. The badge says
+  "Connected to the deflab monitor".
+- **Discord still works** alongside it; whichever sees stock first wins, and the job
+  check + order lock stop a double buy. The Discord tab also tells the monitor about
+  any wanted listing it hasn't seen (`/data/learned.json`).
+- **If Amazon shows it a robot check** it pauses 15 min (doubling up to 2 h) and pushes
+  a warning. Your Mac shares the same home IP, so the pace stays deliberately slow.
+- **Test the hand-off:** on the status page, enter a cheap Amazon.com item's ASIN and max
+  price → **Send test match**. The Mac opens it and dry-runs (never places the order).
+- **Phone push from deflab** (optional, also warns if no browser is connected): put
+  `PUSHOVER_USER=` and `PUSHOVER_TOKEN=` in `/mnt/user/appdata/gpu-monitor/monitor.env`
+  on the Unraid host, then restart the `gpu-monitor` container.
+- **Deploy/update:** `monitor/deploy.sh` from agent-lab (copies the code to
+  `/mnt/user/appdata/gpu-monitor/app`, Compose Manager project `gpu-monitor`).
+  Logs: `docker logs gpu-monitor`.

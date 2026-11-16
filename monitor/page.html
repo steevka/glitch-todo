@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="gtd-monitor" content="1">
+<title>5080 Stock Monitor</title>
+<style>
+  :root { --bg:#111418; --card:#1a1f26; --fg:#e6e9ee; --muted:#8b95a3; --line:#2a313b; --ok:#3fb950; --warn:#d29922; --bad:#f85149; --accent:#58a6ff; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; padding: 20px 16px 80px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin-bottom: 16px; }
+  .cards { display:grid; grid-template-columns: repeat(auto-fit, minmax(180px,1fr)); gap:10px; margin-bottom:16px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:10px 12px; }
+  .card b { display:block; font-size:18px; }
+  .card span { color:var(--muted); font-size:12px; }
+  .ok { color:var(--ok); } .warn { color:var(--warn); } .bad { color:var(--bad); }
+  table { width:100%; border-collapse:collapse; background:var(--card); border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+  th, td { text-align:left; padding:7px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:500; font-size:12px; }
+  td.num { font-variant-numeric: tabular-nums; white-space:nowrap; }
+  a { color:var(--accent); text-decoration:none; }
+  .wrap { overflow-x:auto; }
+  .muted { color:var(--muted); }
+  form { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:18px 0 8px; }
+  input { background:var(--card); color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:6px 8px; }
+  button { background:var(--accent); color:#04111f; border:0; border-radius:6px; padding:7px 12px; font-weight:600; cursor:pointer; }
+  h2 { font-size:15px; margin:22px 0 8px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>5080 Stock Monitor</h1>
+  <div class="sub">Runs on deflab and checks Amazon's offers list for every wanted listing. Keep this tab open in Chrome on your Mac: the auto-buy userscript in this tab does the buying.</div>
+  <div class="cards" id="cards"></div>
+  <h2>Recent matches</h2>
+  <div class="wrap"><table><thead><tr><th>When</th><th>Card</th><th>Seller</th><th>Price</th></tr></thead><tbody id="hits"><tr><td colspan="4" class="muted">None yet.</td></tr></tbody></table></div>
+  <h2>Watching</h2>
+  <div class="wrap"><table><thead><tr><th>Listing</th><th>Tier</th><th>Cheapest from Amazon / Resale</th><th>Offers</th><th>Last check</th></tr></thead><tbody id="watch"></tbody></table></div>
+  <h2>Test the hand-off</h2>
+  <div class="muted">Sends a fake match to the browser. It always runs as a dry run (stops at Place your order). Use a cheap item sold by Amazon.com.</div>
+  <form id="test">
+    <input name="asin" placeholder="ASIN, e.g. B00XXXXXXX" size="16" required>
+    <input name="maxPrice" placeholder="Max price" size="10" required>
+    <button>Send test match</button>
+    <span id="testMsg" class="muted"></span>
+  </form>
+</main>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+  const money = (n) => n == null ? '–' : '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const ago = (t) => { if (!t) return '–'; const s = Math.round((Date.now() - t) / 1000); return s < 90 ? s + 's ago' : s < 5400 ? Math.round(s/60) + 'm ago' : Math.round(s/3600) + 'h ago'; };
+  async function refresh() {
+    let s;
+    try { s = await (await fetch('/status.json', { cache: 'no-store' })).json(); }
+    catch (e) { $('cards').innerHTML = '<div class="card"><b class="bad">Monitor unreachable</b><span>Is deflab up / Tailscale on?</span></div>'; return; }
+    const blocked = s.blockedUntil && s.blockedUntil > Date.now();
+    const round = s.lastRound ? Math.round(s.lastRound.ms / 1000) + 's' : '…';
+    $('cards').innerHTML = [
+      ['Amazon', blocked ? '<span class="bad">Paused (robot check)</span>' : '<span class="ok">Checking</span>', blocked ? 'resumes ' + new Date(s.blockedUntil).toLocaleTimeString() : 'robot checks so far: ' + s.blocksTotal],
+      ['Every listing checked every', round, s.watch.length + ' listings, ' + (s.spacingMs/1000) + 's apart'],
+      ['Browsers connected', s.browsers ? '<span class="ok">' + s.browsers + '</span>' : '<span class="bad">0</span>', s.browsers ? 'ready to buy' : 'reload this tab / check Tampermonkey'],
+      ['Phone push from deflab', s.pushover ? '<span class="ok">On</span>' : '<span class="warn">Off</span>', 'version ' + esc(s.version)],
+    ].map(([k, v, sub]) => `<div class="card"><span>${k}</span><b>${v}</b><span>${sub}</span></div>`).join('');
+    $('hits').innerHTML = s.hits.length ? s.hits.map((h) => `<tr><td class="num">${new Date(h.at).toLocaleString()}</td><td><a href="${esc(h.url)}" target="_blank" rel="noopener">${esc((h.name || h.asin).slice(0, 70))}</a>${h.test ? ' <span class="warn">(test)</span>' : ''}</td><td>${esc(h.merchant || '')} ${esc(h.condition || '')}</td><td class="num">${money(h.price)}</td></tr>`).join('') : '<tr><td colspan="4" class="muted">None yet.</td></tr>';
+    $('watch').innerHTML = s.watch.map((w) => `<tr>
+      <td><a href="https://www.amazon.com/dp/${esc(w.asin)}" target="_blank" rel="noopener">${esc((w.title || w.name).slice(0, 64))}</a><br><span class="muted">${esc(w.asin)}${w.learned ? ' · learned from Discord' : ''}</span></td>
+      <td>${w.tier ? esc(w.tier) : w.wanted === false ? '<span class="muted">not wanted</span>' : '…'}</td>
+      <td class="num">${w.best ? esc(w.best.merchant) + ' ' + esc(w.best.condition) + ' ' + money(w.best.price) : '<span class="muted">none</span>'}</td>
+      <td class="num">${w.offers == null ? '–' : w.offers}</td>
+      <td class="num">${w.error ? '<span class="bad">' + esc(w.error) + '</span>' : ago(w.lastCheck)}</td></tr>`).join('');
+  }
+  $('test').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    const r = await fetch('/test-hit', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ asin: f.get('asin').trim(), maxPrice: f.get('maxPrice') }) });
+    const j = await r.json();
+    $('testMsg').textContent = j.ok ? `Sent to ${j.browsers} browser(s).` : 'Error: ' + (j.why || r.status);
+  });
+  refresh();
+  setInterval(refresh, 5000);
+</script>
+</body>
+</html>

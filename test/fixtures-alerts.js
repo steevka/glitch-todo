@@ -68,7 +68,7 @@ Price as of: 11/06/2026 21:12:05
 Product Link`,
   },
   {
-    fire: false, // TUF Resale $1,804.99 > $1,600 used cap
+    fire: true, // TUF Resale $1,804.99 <= $1,810 TUF used cap
     text: `@5080
 Name: ASUS TUF Gaming GeForce RTX™ 5080 16GB GDDR7 OC Edition Graphics Card | PCIe 5.0, HDMI/DP 2.1, 3.6-slot, Military-grade Components, Protective PCB Coating, Axial-tech Fans (Used - LikeNew)
 Condition: Used - Like New
