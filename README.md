@@ -237,8 +237,9 @@ account, and you accept that risk by arming it.
 - **Models (real RTX 5080s only, air-cooled):**
   - **Flagship:** ASUS ROG Astral, MSI Suprim SOC (air), Gigabyte AORUS Master
   - **TUF:** ASUS TUF (the one you want most, so used is allowed up to the new price)
+  - **Prime:** ASUS Prime (best base card; new from Amazon.com only, for the $1,599.99 drops)
   - **Sweet spot:** MSI Gaming Trio, Gigabyte Gaming OC, PNY Epic-X, ASUS ProArt
-  - Never: base models (Prime, Ventus, Inspire, Windforce, Zotac Solid, PNY plain
+  - Never: other base models (Ventus, Inspire, Windforce, Zotac Solid, PNY plain
     triple-fan), Suprim **Liquid** (AIO), TUF **BTF** (needs a back-connect board),
     water-block cards, Ti, laptops/prebuilts, accessories.
   - All of these fit a Lian Li A3-mATX without bottom fans (415 mm, 4 slots).
@@ -251,6 +252,7 @@ account, and you accept that risk by arming it.
   | Flagship | $1,810 | $1,650 |
   | TUF | $1,810 | $1,810 |
   | Sweet spot | $1,810 | $1,600 |
+  | Prime | $1,610 | never |
 
   Checkout order total must be **≤ $2,000** (tax included).
   Against real alerts from Nov 4–15 2026, this would have fired on the new
@@ -327,8 +329,10 @@ and on Amazon pages the two test commands.
 ## deflab Stock Monitor (your own alerts)
 
 Instead of waiting for the Discord bot, deflab checks Amazon's **All offers** list for
-every wanted 5080 listing (`monitor/asins.json`, about 20) in a slow rotation:
-one request every 2–3 s, so each listing is checked about once a minute. It uses the
+wanted 5080 listings (`monitor/asins.json`). **Currently Prime-only**
+(`WATCH_TIERS=Prime`: the 3 ASUS Prime listings, one request every 20–25 s, each listing
+about once a minute). Checking all ~20 listings 2 s apart got the home IP a captcha on
+Amazon within 6 minutes (2026-11-16), so the full list is only safe from another IP. It uses the
 same model/seller/price rules as the userscript (it `require`s it), and pushes a match
 to Chrome on your Mac, which does the buying in your logged-in session. deflab never
 logs into Amazon.
@@ -340,8 +344,9 @@ logs into Amazon.
 - **Discord still works** alongside it; whichever sees stock first wins, and the job
   check + order lock stop a double buy. The Discord tab also tells the monitor about
   any wanted listing it hasn't seen (`/data/learned.json`).
-- **If Amazon shows it a robot check** it pauses 15 min (doubling up to 2 h) and pushes
-  a warning. Your Mac shares the same home IP, so the pace stays deliberately slow.
+- **If Amazon shows it a robot check** it stays off Amazon for 6 h (then 12 h, …) and
+  pushes a warning. Your Mac shares the same home IP, so the pace stays deliberately slow.
+  It keeps Amazon's cookies (`/data/cookies.json`) so it looks like one visitor.
 - **Test the hand-off:** on the status page, enter a cheap Amazon.com item's ASIN and max
   price → **Send test match**. The Mac opens it and dry-runs (never places the order).
 - **Phone push from deflab** (optional, also warns if no browser is connected): put

@@ -108,7 +108,7 @@ test('a base-model page never matches even with a cheap Resale offer', async () 
 test('robot check pauses, without a hit', async () => {
   mockFetch({ B0DS2R6948: { status: 503, html: 'Sorry' } });
   await M.check({ asin: 'B0DS2R6948', name: 'Gigabyte Gaming OC' });
-  assert.match(M.state.B0DS2R6948.error, /robot check.*pausing 15 min/);
+  assert.match(M.state.B0DS2R6948.error, /robot check.*pausing 360 min/);
 });
 
 test('HTTP: learn, status, test hit', async () => {
@@ -134,7 +134,7 @@ test('HTTP: learn, status, test hit', async () => {
     );
   try {
     assert.equal((await post('/learn', { asin: 'B0TESTTUF1', name: 'ASUS TUF Gaming GeForce RTX 5080 OC' })).learned, true);
-    assert.equal((await post('/learn', { asin: 'B0TESTPRM1', name: 'ASUS Prime GeForce RTX 5080 OC' })).learned, false);
+    assert.equal((await post('/learn', { asin: 'B0TESTVNT1', name: 'MSI GeForce RTX 5080 Ventus 3X OC' })).learned, false);
     assert.equal((await post('/learn', { asin: 'nope', name: 'x' })).ok, false);
     assert.ok(JSON.parse(fs.readFileSync(path.join(process.env.DATA_DIR, 'learned.json'))).B0TESTTUF1);
     assert.ok(M.watchList().some((w) => w.asin === 'B0TESTTUF1'));
@@ -151,4 +151,15 @@ test('HTTP: learn, status, test hit', async () => {
   } finally {
     M.server.close();
   }
+});
+
+test('keeps Amazon cookies between requests', async () => {
+  const sentCookies = [];
+  global.fetch = async (url, init) => {
+    sentCookies.push(init.headers.cookie);
+    return { ok: true, status: 200, headers: new Headers([['set-cookie', 'session-id=135-1234567-7654321; path=/; domain=.amazon.com']]), text: async () => TUF };
+  };
+  await M.check({ asin: 'B0DQSMMCSH', name: 'ASUS TUF OC' });
+  await M.check({ asin: 'B0DQSMMCSH', name: 'ASUS TUF OC' });
+  assert.match(sentCookies[1], /session-id=135-1234567-7654321/);
 });

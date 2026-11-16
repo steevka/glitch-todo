@@ -17,6 +17,10 @@ const JITTER_MS = +process.env.JITTER_MS || 1000;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const PUSHOVER_USER = process.env.PUSHOVER_USER || '';
 const PUSHOVER_TOKEN = process.env.PUSHOVER_TOKEN || '';
+// Only watch listings in these tiers (comma list of tier names; empty = all wanted).
+const WATCH_TIERS = (process.env.WATCH_TIERS || '').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
+const BLOCK_PAUSE_MIN = +process.env.BLOCK_PAUSE_MIN || 360; // after a robot check, stay off Amazon this long
+const START_AT = Date.now() + (+process.env.START_DELAY_MIN || 0) * 60e3;
 const REPEAT_HIT_MS = 20 * 60 * 1000; // same offer at same price: tell the browser again after 20 min
 const HIT_REPLAY_MS = 90 * 1000; // a browser that (re)connects gets hits from the last 90 s
 const UA =
@@ -50,11 +54,44 @@ function log(...a) {
   console.log(new Date().toISOString(), ...a);
 }
 
+function tierOf(asin, name) {
+  const st = state[asin];
+  const tier = Core.classify(settings, (st && st.title) || name + ' RTX 5080');
+  return tier ? tier.name : null;
+}
+
 function watchList() {
   const all = Object.assign({}, seed, learned);
   return Object.keys(all)
     .filter((a) => /^[A-Z0-9]{10}$/.test(a))
-    .map((asin) => ({ asin, name: all[asin] }));
+    .map((asin) => ({ asin, name: all[asin] }))
+    .filter((w) => !WATCH_TIERS.length || WATCH_TIERS.includes(String(tierOf(w.asin, w.name)).toLowerCase()));
+}
+
+// One consistent visitor: keep Amazon's cookies between requests (and restarts).
+const cookieFile = path.join(DATA_DIR, 'cookies.json');
+const cookies = readJson(cookieFile, {});
+function cookieHeader() {
+  return Object.entries(cookies)
+    .map(([k, v]) => k + '=' + v)
+    .join('; ');
+}
+function keepCookies(res) {
+  const list = res.headers && typeof res.headers.getSetCookie === 'function' ? res.headers.getSetCookie() : [];
+  let changed = false;
+  for (const c of list) {
+    const m = /^([^=;\s]+)=([^;]*)/.exec(c);
+    if (!m) continue;
+    if (/max-age=0|expires=Thu, 01 Jan 1970/i.test(c) || m[2] === '' || m[2] === '-') delete cookies[m[1]];
+    else cookies[m[1]] = m[2];
+    changed = true;
+  }
+  if (changed) {
+    try {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+      fs.writeFileSync(cookieFile, JSON.stringify(cookies));
+    } catch (e) {}
+  }
 }
 
 function push(title, message, extra = {}) {
@@ -84,9 +121,10 @@ async function check({ asin, name }) {
   let res, html;
   try {
     res = await fetch(`https://www.amazon.com/gp/product/ajax/aodAjaxMain/?asin=${asin}&pc=dp&isonlyrenderofferlist=false`, {
-      headers: { 'user-agent': UA, 'accept-language': 'en-US,en;q=0.9', accept: 'text/html,*/*;q=0.8' },
+      headers: { 'user-agent': UA, 'accept-language': 'en-US,en;q=0.9', accept: 'text/html,*/*;q=0.8', cookie: cookieHeader() },
       signal: AbortSignal.timeout(15000),
     });
+    keepCookies(res);
     html = await res.text();
   } catch (e) {
     st.error = 'fetch: ' + e.message;
@@ -102,7 +140,7 @@ async function check({ asin, name }) {
   if (looksBlocked(res.status, html)) {
     blocks.count++;
     blocks.total++;
-    const mins = Math.min(15 * 2 ** (blocks.count - 1), 120);
+    const mins = BLOCK_PAUSE_MIN * blocks.count;
     blocks.until = Date.now() + mins * 60e3;
     st.error = `Amazon robot check (HTTP ${res.status}); pausing ${mins} min`;
     log(st.error);
@@ -160,8 +198,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function loop() {
   for (;;) {
-    if (Date.now() < blocks.until) {
-      await sleep(Math.min(blocks.until - Date.now(), 30e3));
+    const waitUntil = Math.max(blocks.until, START_AT);
+    if (Date.now() < waitUntil) {
+      await sleep(Math.min(waitUntil - Date.now(), 30e3));
       continue;
     }
     const list = watchList();
@@ -187,6 +226,18 @@ async function loop() {
       log('check error', item.asin, e.message);
     }
     await sleep(SPACING_MS + Math.random() * JITTER_MS);
+  }
+}
+
+// amzn.to / a.co short links: read the redirect target only (no request to amazon.com).
+async function resolveAsin(url) {
+  try {
+    const u = new URL(url);
+    if (!/^(amzn\.to|a\.co|amzn\.com)$/i.test(u.hostname)) return Core.asinFromUrl(url);
+    const r = await fetch(url, { redirect: 'manual', headers: { 'user-agent': UA }, signal: AbortSignal.timeout(8000) });
+    return Core.asinFromUrl(r.headers.get('location') || '');
+  } catch (e) {
+    return null;
   }
 }
 
@@ -217,6 +268,8 @@ function status() {
     now: Date.now(),
     requests,
     spacingMs: SPACING_MS,
+    watchTiers: WATCH_TIERS,
+    startsAt: START_AT > Date.now() ? START_AT : null,
     lastRound,
     browsers: clients.size,
     blockedUntil: blocks.until > Date.now() ? blocks.until : null,
@@ -248,7 +301,8 @@ const server = http.createServer(async (req, res) => {
   }
   if (req.method === 'POST' && u.pathname === '/learn') {
     const b = await readBody(req);
-    const asin = String(b.asin || '').toUpperCase();
+    let asin = String(b.asin || '').toUpperCase();
+    if (!/^[A-Z0-9]{10}$/.test(asin) && b.url) asin = (await resolveAsin(String(b.url))) || '';
     if (!/^[A-Z0-9]{10}$/.test(asin)) return json(res, 400, { ok: false });
     const isNew = !seed[asin] && !learned[asin];
     if (isNew && Core.classify(settings, String(b.name || ''))) {
@@ -257,7 +311,7 @@ const server = http.createServer(async (req, res) => {
       fs.writeFileSync(learnedFile, JSON.stringify(learned, null, 1));
       log('Learned', asin, learned[asin]);
     }
-    return json(res, 200, { ok: true, learned: !!learned[asin], known: !!seed[asin] });
+    return json(res, 200, { ok: true, asin, learned: !!learned[asin] && isNew, known: !!seed[asin] });
   }
   if (req.method === 'POST' && u.pathname === '/test-hit') {
     const b = await readBody(req);
@@ -273,7 +327,9 @@ const server = http.createServer(async (req, res) => {
 });
 
 if (require.main === module) {
-  server.listen(PORT, () => log(`Stock monitor ${Core.VERSION} on :${PORT}, watching ${watchList().length} listings, ${SPACING_MS} ms apart`));
+  server.listen(PORT, () =>
+    log(`Stock monitor ${Core.VERSION} on :${PORT}, watching ${watchList().length} listings (${WATCH_TIERS.join(',') || 'all tiers'}), ${SPACING_MS} ms apart${START_AT > Date.now() ? ', starting ' + new Date(START_AT).toISOString() : ''}`)
+  );
   loop();
 }
 

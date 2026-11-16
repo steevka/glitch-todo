@@ -16,7 +16,14 @@ services:
     environment:
       - TZ=America/New_York
       - DATA_DIR=/data
-      - SPACING_MS=2000
+      # Prime-only and slow: 3 listings, one request every 20-25 s (each about once a minute).
+      # The all-tiers pace (2 s apart) got the home IP a captcha within 6 minutes.
+      - WATCH_TIERS=Prime
+      - SPACING_MS=20000
+      - JITTER_MS=5000
+      - BLOCK_PAUSE_MIN=360
+      # Wait this long after a (re)start before the first Amazon request. Set to 0 for later restarts.
+      - START_DELAY_MIN=${START_DELAY_MIN:-0}
     env_file: /mnt/user/appdata/gpu-monitor/monitor.env
     volumes:
       - /mnt/user/appdata/gpu-monitor/app:/app:ro

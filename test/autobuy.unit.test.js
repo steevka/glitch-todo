@@ -99,7 +99,8 @@ test('model tiers', () => {
   assert.equal(tier('Gigabyte AORUS GeForce RTX 5080 Xtreme WATERFORCE WB 16G'), null);
   assert.equal(tier('Core GeForce RTX 5080/5070Ti Aorus Master + Windforce with Backplate (10290)'), null);
   assert.equal(tier('GeForce RTX RTX 5070 5080 5090 Gaming OC GPU Fan Replacement Set (OEM)'), null);
-  assert.equal(tier('ASUS Prime GeForce RTX 5080 16GB GDDR7 OC Edition'), null);
+  assert.equal(tier('ASUS Prime GeForce RTX 5080 16GB GDDR7 OC Edition'), 'Prime');
+  assert.equal(tier('Amazon Prime Day PNY GeForce RTX 5080 OC'), null);
   assert.equal(tier('GIGABYTE GeForce RTX 5080 WINDFORCE SFF 16G'), null);
   assert.equal(tier('msi Gaming RTX 5080 16G Ventus 3X OC Black'), null);
   assert.equal(tier('PNY NVIDIA GeForce RTX 5080 Triple-Fan Graphics Card'), null);
@@ -197,6 +198,16 @@ test('checkout gate', () => {
   const turbo = Core.checkoutTotals('Buy now\nTotal $1,743.98\nPlace your order');
   assert.equal(turbo.total, 1743.98);
   assert.equal(Core.checkoutOk(turbo, S).ok, true);
+});
+
+test('Prime: new from Amazon.com at $1,599.99 only', () => {
+  const s = Core.normalizeSettings({});
+  const al = (merchant, condition, price, name = 'ASUS Prime GeForce RTX 5080 16GB GDDR7 Gaming Graphics Card') =>
+    Core.evaluateAlert({ name, merchant, condition, price, url: 'https://www.amazon.com/dp/B0DTPG3B1N', mentionsAmazon: true }, s).go;
+  assert.equal(al('Amazon.com', 'New', 1599.99), true);
+  assert.equal(al('Amazon.com', 'New', 1699.99, 'ASUS Prime GeForce RTX 5080 16GB GDDR7 OC Edition'), false);
+  assert.equal(al('Amazon Resale', 'Used - Like New', 1388.12), false);
+  assert.equal(al('BBlacklow', 'New', 1499.99), false);
 });
 
 test('settings normalise', () => {

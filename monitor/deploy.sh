@@ -8,4 +8,4 @@ ssh unraid "mkdir -p $APP/app/monitor $APP/data $PROJ && touch $APP/monitor.env 
 tar -cf - amazon-autobuy.user.js monitor/aod.js monitor/monitor.js monitor/page.html monitor/asins.json \
   | ssh unraid "tar -xf - -C $APP/app"
 scp -q monitor/docker-compose.yml unraid:$PROJ/docker-compose.yml
-ssh unraid "echo gpu-monitor > $PROJ/name && cd $PROJ && docker compose -p gpu-monitor up -d --force-recreate"
+ssh unraid "echo gpu-monitor > $PROJ/name && cd $PROJ && START_DELAY_MIN=${START_DELAY_MIN:-0} docker compose -p gpu-monitor up -d --force-recreate"
