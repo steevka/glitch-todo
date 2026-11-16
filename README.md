@@ -218,3 +218,104 @@ Checked against the live listing on Sep 26, 2026:
 If a real page ever reads as "Couldn't read price/stock", use **Copy debug
 info**. The report includes the page's data layout, which is what's needed to
 fix the parser.
+
+---
+
+# Discord → Amazon Auto-Buy (`amazon-autobuy.user.js`)
+
+A second userscript, separate from the Walmart watcher. It reads the
+Falcodrin **#rtx5080** alert channel in a Discord **browser tab**. When an
+alert matches what you want, it opens the Amazon listing and checks out with
+your saved card and address.
+
+**Unlike the Walmart watcher, this one places orders.** That breaks
+Amazon's Conditions of Use. Amazon may cancel the order or restrict the
+account, and you accept that risk by arming it.
+
+## What it buys (defaults, change in Settings)
+
+- **Models (real RTX 5080s only, air-cooled):**
+  - **Flagship:** ASUS ROG Astral, MSI Suprim SOC (air), Gigabyte AORUS Master
+  - **Sweet spot:** ASUS TUF, MSI Gaming Trio, Gigabyte Gaming OC, PNY Epic-X, ASUS ProArt
+  - Never: base models (Prime, Ventus, Inspire, Windforce, Zotac Solid, PNY plain
+    triple-fan), Suprim **Liquid** (AIO), TUF **BTF** (needs a back-connect board),
+    water-block cards, Ti, laptops/prebuilts, accessories.
+  - All of these fit a Lian Li A3-mATX without bottom fans (415 mm, 4 slots).
+- **Sellers:** new only from **Amazon.com**; used only from **Amazon Resale**
+  (Like New / Very Good). Never third-party sellers, Used - Good, or Renewed.
+- **Caps (item price, before tax):**
+
+  | | New (Amazon.com) | Resale (Like New / Very Good) |
+  |---|---|---|
+  | Flagship | $1,810 | $1,650 |
+  | Sweet spot | $1,810 | $1,600 |
+
+  Checkout order total must be **≤ $2,000** (tax included).
+  Against real alerts from Nov 4–15 2026, this would have fired on the new
+  Suprim SOC ($1,799.99, twice) and the new PNY Epic-X ($1,799.99), and skipped
+  the $1,805 Resale listings.
+- **One order, ever,** until you clear the lock from the menu.
+- It starts in **dry run**: it goes all the way to checkout, highlights
+  Place your order, rings the siren and pushes to your phone, but doesn't click.
+  Choose **Arm / disarm full auto** from the menu once a dry run has worked.
+
+## How it works
+
+1. **Discord tab:** watches new messages in the channel. It ignores messages
+   that were already on screen and anything older than 2 minutes, so reloading
+   or scrolling up never triggers a buy. MSI-store drops and unwanted conditions
+   are skipped and logged.
+2. On a match it opens the alert's Amazon link in a new tab, tagged so the
+   script knows the tab is a buy attempt. Amazon pages you open yourself are
+   left alone.
+3. **Amazon product page:**
+   - If the buy box is the offer you want (Amazon.com new), it clicks **Buy Now**,
+     which checks out just that item.
+   - Otherwise (Resale/used: no Buy Now), it loads the All Offers list, picks the
+     cheapest offer matching your rules, and adds **exactly that offer, qty 1** to
+     the cart. It refuses if the cart already has anything in it.
+   - Invite-only listings: it clicks **Request invitation** and pushes you.
+4. **Checkout:** reads Items and Order total from the page. It places the order only if
+   Items ≤ max price, Order total ≤ cap, and quantity is 1. Otherwise it stops and
+   pushes you the reason.
+5. **Thank-you page:** "ORDER PLACED" push. The order lock is now on.
+
+Captcha, sign-in prompts, a missing payment method, or a vanished offer all stop it with
+a push. It never tries to solve a captcha.
+
+## Setup
+
+1. Tampermonkey as in the Walmart setup above (including **Allow User Scripts**).
+2. Install: <https://raw.githubusercontent.com/steevka/glitch-todo/glitch/amazon-autobuy.user.js>
+3. Tampermonkey icon → **Discord → Amazon Auto-Buy** → **Settings…** and paste your
+   Pushover `pushoverUser` / `pushoverToken` (the same values as the Walmart watcher),
+   and optionally a `healthcheckUrl`. Then **Send test push**.
+4. In Chrome, open <https://discord.com/channels/767566223729754122/1338546225405890580>
+   (**not** the Discord desktop app), pin the tab, and keep it **scrolled to the bottom**.
+   A badge in the corner says what it's doing.
+5. Chrome → Settings → Performance → **Always keep these sites active**: add
+   `discord.com` and `amazon.com`, so the tabs aren't put to sleep.
+6. On amazon.com, in the same Chrome profile: stay signed in, set a default address and
+   card, turn on **Buy Now / 1-Click**, and **keep the cart empty** (move anything there
+   to Save for later).
+7. Dry run test: open any product page on Amazon (it doesn't have to be a 5080),
+   Tampermonkey menu → **Test this product page (dry run)**, enter a max price. It goes
+   to checkout and stops at Place your order. If it took the Resale path it **added the
+   item to your cart**; remove it afterwards.
+8. Real test: on something cheap you actually want, **Test buy this product (REAL
+   order)**. It places the order if the item is ≤ your max and sold by Amazon.com (or
+   Amazon Resale). Test buys don't set the order lock and work while disarmed.
+9. When that worked, **Arm / disarm full auto**.
+
+Menu: Settings…, Arm / disarm full auto, Reset order lock, Send test push, Show log,
+and on Amazon pages the two test commands.
+
+## Limits
+
+- Alerts arrive a few seconds after the drop, so some offers will already be gone.
+  You'll get an "offer is gone" push.
+- Amazon changes its page layout. The parsing was built against real All Offers
+  markup on 2026-11-16 (including the empty `.a-offscreen` price quirk), but the
+  checkout page was only tested against a mock. That's why it starts in dry run.
+- Discord only renders new messages while the channel is scrolled to the bottom.
+- Tests: `npm test` (pure logic, using the real alert text and offer markup).
