@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Discord → Amazon Auto-Buy (RTX 5080)
 // @namespace    https://github.com/steevka/glitch-todo
-// @version      0.2.2
+// @version      0.2.3
 // @description  Watches a Discord stock-alert channel in the browser tab you have open. When an alert for an Amazon offer you want appears (right merchant, condition and price), it opens the listing and checks out with your saved card and address. One order max until you reset it.
 // @author       steevka
 // @match        https://discord.com/*
@@ -30,7 +30,7 @@
    * (test/autobuy.unit.test.js).
    * ==================================================================== */
   const Core = (() => {
-    const VERSION = '0.2.2';
+    const VERSION = '0.2.3';
     const DISCORD_EPOCH = 1420070400000;
 
     const DEFAULT_SETTINGS = {
@@ -634,7 +634,11 @@
     const s = settings();
     if (!job || !job.test) return s;
     const cap = job.testCap;
-    return Object.assign({}, s, { minPrice: 0, maxPrice: cap, maxOrderTotal: Math.round(cap * 1.25 + 15) });
+    return Object.assign({}, s, { minPrice: 0, maxPrice: cap, maxOrderTotal: testTotalCap(cap) });
+  }
+  // Item price + up to 12% sales tax; shipping must be free.
+  function testTotalCap(cap) {
+    return Math.ceil(cap * 1.12 * 100) / 100;
   }
   function tierFor(job, s, title) {
     if (!job || !job.test) return Core.classify(s, title);
@@ -884,7 +888,7 @@
         if (ans === null) return;
         const cap = Core.parseMoney(ans);
         if (!cap) return alert('Not a price.');
-        if (real && !confirm(`This places a REAL order with your saved card and address, up to ${Core.fmtMoney(cap)} for the item (order total up to ${Core.fmtMoney(Math.round(cap * 1.25 + 15))}). Go?`)) return;
+        if (real && !confirm(`This places a REAL order with your saved card and address, up to ${Core.fmtMoney(cap)} for the item (order total incl. tax up to ${Core.fmtMoney(testTotalCap(cap))}, free shipping only). Go?`)) return;
         setJob({ id: 't' + Date.now(), created: Date.now(), stage: 'product', armed: real, test: true, testCap: cap, alert: { name: title, url: location.href.split('#')[0], price: box.price } });
         badge(real ? 'Test buy: REAL order' : 'Test: dry run');
         productPage(getJob());
