@@ -41,6 +41,8 @@ function readPage() {
     availability: txt('#availability').slice(0, 120),
     captcha: !!document.querySelector('form[action*="validateCaptcha"]') || /Type the characters you see|Enter the characters you see/i.test(body.slice(0, 3000)),
     continueShopping: /continue shopping/i.test(body.slice(0, 1500)) && !document.querySelector('#productTitle'),
+    // For pages that aren't a normal product page: what is it?
+    debug: document.querySelector('#productTitle') ? '' : `${location.href.slice(0, 120)} | ${document.title.slice(0, 80)} | ${body.replace(/\s+/g, ' ').slice(0, 200)}`,
   };
 }
 
@@ -85,7 +87,7 @@ async function createBrowserChecker({ dataDir, log, Core, headless = true, setup
     const box = Core.parseBuyBox(info.sellerText, info.boxText);
     const offers =
       info.price !== null && box.merchant && info.canBuy ? [{ condition: box.condition, seller: box.merchant, price: info.price }] : [];
-    return { status, blocked, title: info.title, offers, note: info.availability };
+    return { status, blocked, title: info.title, offers, note: info.debug ? `HTTP ${status} ${info.debug}` : info.availability };
   }
 
   return { check, close: () => ctx.close() };
