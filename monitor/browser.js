@@ -5,8 +5,6 @@
 
 const path = require('path');
 
-const UA =
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36';
 
 // Runs inside the page.
 function readPage() {
@@ -48,14 +46,23 @@ function readPage() {
 
 async function createBrowserChecker({ dataDir, log, Core, headless = true, setup = null }) {
   const { chromium } = require(process.env.PLAYWRIGHT_CORE || 'playwright-core');
-  const ctx = await chromium.launchPersistentContext(path.join(dataDir, 'chrome-profile'), {
+  const profile = path.join(dataDir, 'chrome-profile');
+  const opts = {
     headless,
     channel: 'chromium', // full Chromium in new headless mode, not the stripped headless shell
-    userAgent: UA,
+    args: ['--disable-blink-features=AutomationControlled'],
+  };
+  // Use the browser's own identity (real version and OS, so it matches every other signal
+  // it sends), minus the "HeadlessChrome" tag.
+  const probe = await chromium.launchPersistentContext(profile, opts);
+  const realUA = await (probe.pages()[0] || (await probe.newPage())).evaluate(() => navigator.userAgent);
+  await probe.close();
+  const ctx = await chromium.launchPersistentContext(profile, {
+    ...opts,
+    userAgent: realUA.replace(/HeadlessChrome/g, 'Chrome'),
     locale: 'en-US',
     timezoneId: 'America/New_York',
     viewport: { width: 1440, height: 900 },
-    args: ['--disable-blink-features=AutomationControlled'],
   });
   if (setup) await setup(ctx); // tests route Amazon to saved pages
   const page = ctx.pages()[0] || (await ctx.newPage());
